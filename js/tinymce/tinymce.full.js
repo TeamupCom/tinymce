@@ -58808,6 +58808,10578 @@ define(
 
 dem('tinymce.themes.modern.Theme')();
 })();
+(function () {
+
+var defs = {}; // id -> {dependencies, definition, instance (possibly undefined)}
+
+// Used when there is no 'main' module.
+// The name is probably (hopefully) unique so minification removes for releases.
+var register_3795 = function (id) {
+  var module = dem(id);
+  var fragments = id.split('.');
+  var target = Function('return this;')();
+  for (var i = 0; i < fragments.length - 1; ++i) {
+    if (target[fragments[i]] === undefined)
+      target[fragments[i]] = {};
+    target = target[fragments[i]];
+  }
+  target[fragments[fragments.length - 1]] = module;
+};
+
+var instantiate = function (id) {
+  var actual = defs[id];
+  var dependencies = actual.deps;
+  var definition = actual.defn;
+  var len = dependencies.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances[i] = dem(dependencies[i]);
+  var defResult = definition.apply(null, instances);
+  if (defResult === undefined)
+     throw 'module [' + id + '] returned undefined';
+  actual.instance = defResult;
+};
+
+var def = function (id, dependencies, definition) {
+  if (typeof id !== 'string')
+    throw 'module id must be a string';
+  else if (dependencies === undefined)
+    throw 'no dependencies for ' + id;
+  else if (definition === undefined)
+    throw 'no definition function for ' + id;
+  defs[id] = {
+    deps: dependencies,
+    defn: definition,
+    instance: undefined
+  };
+};
+
+var dem = function (id) {
+  var actual = defs[id];
+  if (actual === undefined)
+    throw 'module [' + id + '] was undefined';
+  else if (actual.instance === undefined)
+    instantiate(id);
+  return actual.instance;
+};
+
+var req = function (ids, callback) {
+  var len = ids.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances.push(dem(ids[i]));
+  callback.apply(null, callback);
+};
+
+var ephox = {};
+
+ephox.bolt = {
+  module: {
+    api: {
+      define: def,
+      require: req,
+      demand: dem
+    }
+  }
+};
+
+var define = def;
+var require = req;
+var demand = dem;
+// this helps with minificiation when using a lot of global references
+var defineGlobal = function (id, ref) {
+  define(id, [], function () { return ref; });
+};
+/*jsc
+["tinymce.plugins.autolink.Plugin","tinymce.core.Env","tinymce.core.PluginManager","global!tinymce.util.Tools.resolve"]
+jsc*/
+defineGlobal("global!tinymce.util.Tools.resolve", tinymce.util.Tools.resolve);
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.Env',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.Env');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.PluginManager',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.PluginManager');
+  }
+);
+
+/**
+ * Plugin.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+/**
+ * This class contains all core logic for the autolink plugin.
+ *
+ * @class tinymce.autolink.Plugin
+ * @private
+ */
+define(
+  'tinymce.plugins.autolink.Plugin',
+  [
+    'tinymce.core.Env',
+    'tinymce.core.PluginManager'
+  ],
+  function (Env, PluginManager) {
+    var rangeEqualsDelimiterOrSpace = function (rangeString, delimiter) {
+      return rangeString === delimiter || rangeString === ' ' || rangeString.charCodeAt(0) === 160;
+    };
+
+    PluginManager.add('autolink', function (editor) {
+      var AutoUrlDetectState;
+      var AutoLinkPattern = /^(https?:\/\/|ssh:\/\/|ftp:\/\/|file:\/|www\.|(?:mailto:)?[A-Z0-9._%+\-]+@)(.+)$/i;
+
+      if (editor.settings.autolink_pattern) {
+        AutoLinkPattern = editor.settings.autolink_pattern;
+      }
+
+      editor.on("keydown", function (e) {
+        if (e.keyCode == 13) {
+          return handleEnter(editor);
+        }
+      });
+
+      // Internet Explorer has built-in automatic linking for most cases
+      if (Env.ie) {
+        editor.on("focus", function () {
+          if (!AutoUrlDetectState) {
+            AutoUrlDetectState = true;
+
+            try {
+              editor.execCommand('AutoUrlDetect', false, true);
+            } catch (ex) {
+              // Ignore
+            }
+          }
+        });
+
+        return;
+      }
+
+      editor.on("keypress", function (e) {
+        if (e.keyCode == 41) {
+          return handleEclipse(editor);
+        }
+      });
+
+      editor.on("keyup", function (e) {
+        if (e.keyCode == 32) {
+          return handleSpacebar(editor);
+        }
+      });
+
+      function handleEclipse(editor) {
+        parseCurrentLine(editor, -1, '(', true);
+      }
+
+      function handleSpacebar(editor) {
+        parseCurrentLine(editor, 0, '', true);
+      }
+
+      function handleEnter(editor) {
+        parseCurrentLine(editor, -1, '', false);
+      }
+
+      function parseCurrentLine(editor, endOffset, delimiter) {
+        var rng, end, start, endContainer, bookmark, text, matches, prev, len, rngText;
+
+        function scopeIndex(container, index) {
+          if (index < 0) {
+            index = 0;
+          }
+
+          if (container.nodeType == 3) {
+            var len = container.data.length;
+
+            if (index > len) {
+              index = len;
+            }
+          }
+
+          return index;
+        }
+
+        function setStart(container, offset) {
+          if (container.nodeType != 1 || container.hasChildNodes()) {
+            rng.setStart(container, scopeIndex(container, offset));
+          } else {
+            rng.setStartBefore(container);
+          }
+        }
+
+        function setEnd(container, offset) {
+          if (container.nodeType != 1 || container.hasChildNodes()) {
+            rng.setEnd(container, scopeIndex(container, offset));
+          } else {
+            rng.setEndAfter(container);
+          }
+        }
+
+        // Never create a link when we are inside a link
+        if (editor.selection.getNode().tagName == 'A') {
+          return;
+        }
+
+        // We need at least five characters to form a URL,
+        // hence, at minimum, five characters from the beginning of the line.
+        rng = editor.selection.getRng(true).cloneRange();
+        if (rng.startOffset < 5) {
+          // During testing, the caret is placed between two text nodes.
+          // The previous text node contains the URL.
+          prev = rng.endContainer.previousSibling;
+          if (!prev) {
+            if (!rng.endContainer.firstChild || !rng.endContainer.firstChild.nextSibling) {
+              return;
+            }
+
+            prev = rng.endContainer.firstChild.nextSibling;
+          }
+
+          len = prev.length;
+          setStart(prev, len);
+          setEnd(prev, len);
+
+          if (rng.endOffset < 5) {
+            return;
+          }
+
+          end = rng.endOffset;
+          endContainer = prev;
+        } else {
+          endContainer = rng.endContainer;
+
+          // Get a text node
+          if (endContainer.nodeType != 3 && endContainer.firstChild) {
+            while (endContainer.nodeType != 3 && endContainer.firstChild) {
+              endContainer = endContainer.firstChild;
+            }
+
+            // Move range to text node
+            if (endContainer.nodeType == 3) {
+              setStart(endContainer, 0);
+              setEnd(endContainer, endContainer.nodeValue.length);
+            }
+          }
+
+          if (rng.endOffset == 1) {
+            end = 2;
+          } else {
+            end = rng.endOffset - 1 - endOffset;
+          }
+        }
+
+        start = end;
+
+        do {
+          // Move the selection one character backwards.
+          setStart(endContainer, end >= 2 ? end - 2 : 0);
+          setEnd(endContainer, end >= 1 ? end - 1 : 0);
+          end -= 1;
+          rngText = rng.toString();
+
+          // Loop until one of the following is found: a blank space, &nbsp;, delimiter, (end-2) >= 0
+        } while (rngText != ' ' && rngText !== '' && rngText.charCodeAt(0) != 160 && (end - 2) >= 0 && rngText != delimiter);
+
+        if (rangeEqualsDelimiterOrSpace(rng.toString(), delimiter)) {
+          setStart(endContainer, end);
+          setEnd(endContainer, start);
+          end += 1;
+        } else if (rng.startOffset === 0) {
+          setStart(endContainer, 0);
+          setEnd(endContainer, start);
+        } else {
+          setStart(endContainer, end);
+          setEnd(endContainer, start);
+        }
+
+        // Exclude last . from word like "www.site.com."
+        text = rng.toString();
+        if (text.charAt(text.length - 1) == '.') {
+          setEnd(endContainer, start - 1);
+        }
+
+        text = rng.toString();
+        matches = text.match(AutoLinkPattern);
+
+        if (matches) {
+          if (matches[1] == 'www.') {
+            matches[1] = 'http://www.';
+          } else if (/@$/.test(matches[1]) && !/^mailto:/.test(matches[1])) {
+            matches[1] = 'mailto:' + matches[1];
+          }
+
+          bookmark = editor.selection.getBookmark();
+
+          editor.selection.setRng(rng);
+          editor.execCommand('createlink', false, matches[1] + matches[2]);
+
+          if (editor.settings.default_link_target) {
+            editor.dom.setAttrib(editor.selection.getNode(), 'target', editor.settings.default_link_target);
+          }
+
+          editor.selection.moveToBookmark(bookmark);
+          editor.nodeChanged();
+        }
+      }
+    });
+
+    return function () { };
+  }
+);
+dem('tinymce.plugins.autolink.Plugin')();
+})();
+(function () {
+
+var defs = {}; // id -> {dependencies, definition, instance (possibly undefined)}
+
+// Used when there is no 'main' module.
+// The name is probably (hopefully) unique so minification removes for releases.
+var register_3795 = function (id) {
+  var module = dem(id);
+  var fragments = id.split('.');
+  var target = Function('return this;')();
+  for (var i = 0; i < fragments.length - 1; ++i) {
+    if (target[fragments[i]] === undefined)
+      target[fragments[i]] = {};
+    target = target[fragments[i]];
+  }
+  target[fragments[fragments.length - 1]] = module;
+};
+
+var instantiate = function (id) {
+  var actual = defs[id];
+  var dependencies = actual.deps;
+  var definition = actual.defn;
+  var len = dependencies.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances[i] = dem(dependencies[i]);
+  var defResult = definition.apply(null, instances);
+  if (defResult === undefined)
+     throw 'module [' + id + '] returned undefined';
+  actual.instance = defResult;
+};
+
+var def = function (id, dependencies, definition) {
+  if (typeof id !== 'string')
+    throw 'module id must be a string';
+  else if (dependencies === undefined)
+    throw 'no dependencies for ' + id;
+  else if (definition === undefined)
+    throw 'no definition function for ' + id;
+  defs[id] = {
+    deps: dependencies,
+    defn: definition,
+    instance: undefined
+  };
+};
+
+var dem = function (id) {
+  var actual = defs[id];
+  if (actual === undefined)
+    throw 'module [' + id + '] was undefined';
+  else if (actual.instance === undefined)
+    instantiate(id);
+  return actual.instance;
+};
+
+var req = function (ids, callback) {
+  var len = ids.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances.push(dem(ids[i]));
+  callback.apply(null, callback);
+};
+
+var ephox = {};
+
+ephox.bolt = {
+  module: {
+    api: {
+      define: def,
+      require: req,
+      demand: dem
+    }
+  }
+};
+
+var define = def;
+var require = req;
+var demand = dem;
+// this helps with minificiation when using a lot of global references
+var defineGlobal = function (id, ref) {
+  define(id, [], function () { return ref; });
+};
+/*jsc
+["tinymce.plugins.contextmenu.Plugin","tinymce.core.dom.DOMUtils","tinymce.core.Env","tinymce.core.PluginManager","tinymce.core.ui.Menu","tinymce.core.util.Tools","tinymce.plugins.contextmenu.RangePoint","global!tinymce.util.Tools.resolve","ephox.katamari.api.Arr","ephox.katamari.api.Option","global!Array","global!Error","global!String","ephox.katamari.api.Fun","global!Object"]
+jsc*/
+defineGlobal("global!tinymce.util.Tools.resolve", tinymce.util.Tools.resolve);
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.dom.DOMUtils',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.dom.DOMUtils');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.Env',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.Env');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.PluginManager',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.PluginManager');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.ui.Menu',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.ui.Menu');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.util.Tools',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.util.Tools');
+  }
+);
+
+defineGlobal("global!Array", Array);
+defineGlobal("global!Error", Error);
+define(
+  'ephox.katamari.api.Fun',
+
+  [
+    'global!Array',
+    'global!Error'
+  ],
+
+  function (Array, Error) {
+
+    var noop = function () { };
+
+    var compose = function (fa, fb) {
+      return function () {
+        return fa(fb.apply(null, arguments));
+      };
+    };
+
+    var constant = function (value) {
+      return function () {
+        return value;
+      };
+    };
+
+    var identity = function (x) {
+      return x;
+    };
+
+    var tripleEquals = function(a, b) {
+      return a === b;
+    };
+
+    // Don't use array slice(arguments), makes the whole function unoptimisable on Chrome
+    var curry = function (f) {
+      // equivalent to arguments.slice(1)
+      // starting at 1 because 0 is the f, makes things tricky.
+      // Pay attention to what variable is where, and the -1 magic.
+      // thankfully, we have tests for this.
+      var args = new Array(arguments.length - 1);
+      for (var i = 1; i < arguments.length; i++) args[i-1] = arguments[i];
+
+      return function () {
+        var newArgs = new Array(arguments.length);
+        for (var j = 0; j < newArgs.length; j++) newArgs[j] = arguments[j];
+
+        var all = args.concat(newArgs);
+        return f.apply(null, all);
+      };
+    };
+
+    var not = function (f) {
+      return function () {
+        return !f.apply(null, arguments);
+      };
+    };
+
+    var die = function (msg) {
+      return function () {
+        throw new Error(msg);
+      };
+    };
+
+    var apply = function (f) {
+      return f();
+    };
+
+    var call = function(f) {
+      f();
+    };
+
+    var never = constant(false);
+    var always = constant(true);
+    
+
+    return {
+      noop: noop,
+      compose: compose,
+      constant: constant,
+      identity: identity,
+      tripleEquals: tripleEquals,
+      curry: curry,
+      not: not,
+      die: die,
+      apply: apply,
+      call: call,
+      never: never,
+      always: always
+    };
+  }
+);
+
+defineGlobal("global!Object", Object);
+define(
+  'ephox.katamari.api.Option',
+
+  [
+    'ephox.katamari.api.Fun',
+    'global!Object'
+  ],
+
+  function (Fun, Object) {
+
+    var never = Fun.never;
+    var always = Fun.always;
+
+    /**
+      Option objects support the following methods:
+
+      fold :: this Option a -> ((() -> b, a -> b)) -> Option b
+
+      is :: this Option a -> a -> Boolean
+
+      isSome :: this Option a -> () -> Boolean
+
+      isNone :: this Option a -> () -> Boolean
+
+      getOr :: this Option a -> a -> a
+
+      getOrThunk :: this Option a -> (() -> a) -> a
+
+      getOrDie :: this Option a -> String -> a
+
+      or :: this Option a -> Option a -> Option a
+        - if some: return self
+        - if none: return opt
+
+      orThunk :: this Option a -> (() -> Option a) -> Option a
+        - Same as "or", but uses a thunk instead of a value
+
+      map :: this Option a -> (a -> b) -> Option b
+        - "fmap" operation on the Option Functor.
+        - same as 'each'
+
+      ap :: this Option a -> Option (a -> b) -> Option b
+        - "apply" operation on the Option Apply/Applicative.
+        - Equivalent to <*> in Haskell/PureScript.
+
+      each :: this Option a -> (a -> b) -> Option b
+        - same as 'map'
+
+      bind :: this Option a -> (a -> Option b) -> Option b
+        - "bind"/"flatMap" operation on the Option Bind/Monad.
+        - Equivalent to >>= in Haskell/PureScript; flatMap in Scala.
+
+      flatten :: {this Option (Option a))} -> () -> Option a
+        - "flatten"/"join" operation on the Option Monad.
+
+      exists :: this Option a -> (a -> Boolean) -> Boolean
+
+      forall :: this Option a -> (a -> Boolean) -> Boolean
+
+      filter :: this Option a -> (a -> Boolean) -> Option a
+
+      equals :: this Option a -> Option a -> Boolean
+
+      equals_ :: this Option a -> (Option a, a -> Boolean) -> Boolean
+
+      toArray :: this Option a -> () -> [a]
+
+    */
+
+    var none = function () { return NONE; };
+
+    var NONE = (function () {
+      var eq = function (o) {
+        return o.isNone();
+      };
+
+      // inlined from peanut, maybe a micro-optimisation?
+      var call = function (thunk) { return thunk(); };
+      var id = function (n) { return n; };
+      var noop = function () { };
+
+      var me = {
+        fold: function (n, s) { return n(); },
+        is: never,
+        isSome: never,
+        isNone: always,
+        getOr: id,
+        getOrThunk: call,
+        getOrDie: function (msg) {
+          throw new Error(msg || 'error: getOrDie called on none.');
+        },
+        or: id,
+        orThunk: call,
+        map: none,
+        ap: none,
+        each: noop,
+        bind: none,
+        flatten: none,
+        exists: never,
+        forall: always,
+        filter: none,
+        equals: eq,
+        equals_: eq,
+        toArray: function () { return []; },
+        toString: Fun.constant("none()")
+      };
+      if (Object.freeze) Object.freeze(me);
+      return me;
+    })();
+
+
+    /** some :: a -> Option a */
+    var some = function (a) {
+
+      // inlined from peanut, maybe a micro-optimisation?
+      var constant_a = function () { return a; };
+
+      var self = function () {
+        // can't Fun.constant this one
+        return me;
+      };
+
+      var map = function (f) {
+        return some(f(a));
+      };
+
+      var bind = function (f) {
+        return f(a);
+      };
+
+      var me = {
+        fold: function (n, s) { return s(a); },
+        is: function (v) { return a === v; },
+        isSome: always,
+        isNone: never,
+        getOr: constant_a,
+        getOrThunk: constant_a,
+        getOrDie: constant_a,
+        or: self,
+        orThunk: self,
+        map: map,
+        ap: function (optfab) {
+          return optfab.fold(none, function(fab) {
+            return some(fab(a));
+          });
+        },
+        each: function (f) {
+          f(a);
+        },
+        bind: bind,
+        flatten: constant_a,
+        exists: bind,
+        forall: bind,
+        filter: function (f) {
+          return f(a) ? me : NONE;
+        },
+        equals: function (o) {
+          return o.is(a);
+        },
+        equals_: function (o, elementEq) {
+          return o.fold(
+            never,
+            function (b) { return elementEq(a, b); }
+          );
+        },
+        toArray: function () {
+          return [a];
+        },
+        toString: function () {
+          return 'some(' + a + ')';
+        }
+      };
+      return me;
+    };
+
+    /** from :: undefined|null|a -> Option a */
+    var from = function (value) {
+      return value === null || value === undefined ? NONE : some(value);
+    };
+
+    return {
+      some: some,
+      none: none,
+      from: from
+    };
+  }
+);
+
+defineGlobal("global!String", String);
+define(
+  'ephox.katamari.api.Arr',
+
+  [
+    'ephox.katamari.api.Option',
+    'global!Array',
+    'global!Error',
+    'global!String'
+  ],
+
+  function (Option, Array, Error, String) {
+    // Use the native Array.indexOf if it is available (IE9+) otherwise fall back to manual iteration
+    // https://developer.mozilla.org/en/docs/Web/JavaScript/Reference/Global_Objects/Array/indexOf
+    var rawIndexOf = (function () {
+      var pIndexOf = Array.prototype.indexOf;
+
+      var fastIndex = function (xs, x) { return  pIndexOf.call(xs, x); };
+
+      var slowIndex = function(xs, x) { return slowIndexOf(xs, x); };
+
+      return pIndexOf === undefined ? slowIndex : fastIndex;
+    })();
+
+    var indexOf = function (xs, x) {
+      // The rawIndexOf method does not wrap up in an option. This is for performance reasons.
+      var r = rawIndexOf(xs, x);
+      return r === -1 ? Option.none() : Option.some(r);
+    };
+
+    var contains = function (xs, x) {
+      return rawIndexOf(xs, x) > -1;
+    };
+
+    // Using findIndex is likely less optimal in Chrome (dynamic return type instead of bool)
+    // but if we need that micro-optimisation we can inline it later.
+    var exists = function (xs, pred) {
+      return findIndex(xs, pred).isSome();
+    };
+
+    var range = function (num, f) {
+      var r = [];
+      for (var i = 0; i < num; i++) {
+        r.push(f(i));
+      }
+      return r;
+    };
+
+    // It's a total micro optimisation, but these do make some difference.
+    // Particularly for browsers other than Chrome.
+    // - length caching
+    // http://jsperf.com/browser-diet-jquery-each-vs-for-loop/69
+    // - not using push
+    // http://jsperf.com/array-direct-assignment-vs-push/2
+
+    var chunk = function (array, size) {
+      var r = [];
+      for (var i = 0; i < array.length; i += size) {
+        var s = array.slice(i, i + size);
+        r.push(s);
+      }
+      return r;
+    };
+
+    var map = function(xs, f) {
+      // pre-allocating array size when it's guaranteed to be known
+      // http://jsperf.com/push-allocated-vs-dynamic/22
+      var len = xs.length;
+      var r = new Array(len);
+      for (var i = 0; i < len; i++) {
+        var x = xs[i];
+        r[i] = f(x, i, xs);
+      }
+      return r;
+    };
+
+    // Unwound implementing other functions in terms of each.
+    // The code size is roughly the same, and it should allow for better optimisation.
+    var each = function(xs, f) {
+      for (var i = 0, len = xs.length; i < len; i++) {
+        var x = xs[i];
+        f(x, i, xs);
+      }
+    };
+
+    var eachr = function (xs, f) {
+      for (var i = xs.length - 1; i >= 0; i--) {
+        var x = xs[i];
+        f(x, i, xs);
+      }
+    };
+
+    var partition = function(xs, pred) {
+      var pass = [];
+      var fail = [];
+      for (var i = 0, len = xs.length; i < len; i++) {
+        var x = xs[i];
+        var arr = pred(x, i, xs) ? pass : fail;
+        arr.push(x);
+      }
+      return { pass: pass, fail: fail };
+    };
+
+    var filter = function(xs, pred) {
+      var r = [];
+      for (var i = 0, len = xs.length; i < len; i++) {
+        var x = xs[i];
+        if (pred(x, i, xs)) {
+          r.push(x);
+        }
+      }
+      return r;
+    };
+
+    /*
+     * Groups an array into contiguous arrays of like elements. Whether an element is like or not depends on f.
+     *
+     * f is a function that derives a value from an element - e.g. true or false, or a string.
+     * Elements are like if this function generates the same value for them (according to ===).
+     *
+     *
+     * Order of the elements is preserved. Arr.flatten() on the result will return the original list, as with Haskell groupBy function.
+     *  For a good explanation, see the group function (which is a special case of groupBy)
+     *  http://hackage.haskell.org/package/base-4.7.0.0/docs/Data-List.html#v:group
+     */
+    var groupBy = function (xs, f) {
+      if (xs.length === 0) {
+        return [];
+      } else {
+        var wasType = f(xs[0]); // initial case for matching
+        var r = [];
+        var group = [];
+
+        for (var i = 0, len = xs.length; i < len; i++) {
+          var x = xs[i];
+          var type = f(x);
+          if (type !== wasType) {
+            r.push(group);
+            group = [];
+          }
+          wasType = type;
+          group.push(x);
+        }
+        if (group.length !== 0) {
+          r.push(group);
+        }
+        return r;
+      }
+    };
+
+    var foldr = function (xs, f, acc) {
+      eachr(xs, function (x) {
+        acc = f(acc, x);
+      });
+      return acc;
+    };
+
+    var foldl = function (xs, f, acc) {
+      each(xs, function (x) {
+        acc = f(acc, x);
+      });
+      return acc;
+    };
+
+    var find = function (xs, pred) {
+      for (var i = 0, len = xs.length; i < len; i++) {
+        var x = xs[i];
+        if (pred(x, i, xs)) {
+          return Option.some(x);
+        }
+      }
+      return Option.none();
+    };
+
+    var findIndex = function (xs, pred) {
+      for (var i = 0, len = xs.length; i < len; i++) {
+        var x = xs[i];
+        if (pred(x, i, xs)) {
+          return Option.some(i);
+        }
+      }
+
+      return Option.none();
+    };
+
+    var slowIndexOf = function (xs, x) {
+      for (var i = 0, len = xs.length; i < len; ++i) {
+        if (xs[i] === x) {
+          return i;
+        }
+      }
+
+      return -1;
+    };
+
+    var push = Array.prototype.push;
+    var flatten = function (xs) {
+      // Note, this is possible because push supports multiple arguments:
+      // http://jsperf.com/concat-push/6
+      // Note that in the past, concat() would silently work (very slowly) for array-like objects.
+      // With this change it will throw an error.
+      var r = [];
+      for (var i = 0, len = xs.length; i < len; ++i) {
+        // Ensure that each value is an array itself
+        if (! Array.prototype.isPrototypeOf(xs[i])) throw new Error('Arr.flatten item ' + i + ' was not an array, input: ' + xs);
+        push.apply(r, xs[i]);
+      }
+      return r;
+    };
+
+    var bind = function (xs, f) {
+      var output = map(xs, f);
+      return flatten(output);
+    };
+
+    var forall = function (xs, pred) {
+      for (var i = 0, len = xs.length; i < len; ++i) {
+        var x = xs[i];
+        if (pred(x, i, xs) !== true) {
+          return false;
+        }
+      }
+      return true;
+    };
+
+    var equal = function (a1, a2) {
+      return a1.length === a2.length && forall(a1, function (x, i) {
+        return x === a2[i];
+      });
+    };
+
+    var slice = Array.prototype.slice;
+    var reverse = function (xs) {
+      var r = slice.call(xs, 0);
+      r.reverse();
+      return r;
+    };
+
+    var difference = function (a1, a2) {
+      return filter(a1, function (x) {
+        return !contains(a2, x);
+      });
+    };
+
+    var mapToObject = function(xs, f) {
+      var r = {};
+      for (var i = 0, len = xs.length; i < len; i++) {
+        var x = xs[i];
+        r[String(x)] = f(x, i);
+      }
+      return r;
+    };
+
+    var pure = function(x) {
+      return [x];
+    };
+
+    var sort = function (xs, comparator) {
+      var copy = slice.call(xs, 0);
+      copy.sort(comparator);
+      return copy;
+    };
+
+    return {
+      map: map,
+      each: each,
+      eachr: eachr,
+      partition: partition,
+      filter: filter,
+      groupBy: groupBy,
+      indexOf: indexOf,
+      foldr: foldr,
+      foldl: foldl,
+      find: find,
+      findIndex: findIndex,
+      flatten: flatten,
+      bind: bind,
+      forall: forall,
+      exists: exists,
+      contains: contains,
+      equal: equal,
+      reverse: reverse,
+      chunk: chunk,
+      difference: difference,
+      mapToObject: mapToObject,
+      pure: pure,
+      sort: sort,
+      range: range
+    };
+  }
+);
+/**
+ * RangePoint.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.contextmenu.RangePoint',
+  [
+    'ephox.katamari.api.Arr'
+  ],
+  function (Arr) {
+    var containsXY = function (clientRect, clientX, clientY) {
+      return (
+        clientX >= clientRect.left &&
+        clientX <= clientRect.right &&
+        clientY >= clientRect.top &&
+        clientY <= clientRect.bottom
+      );
+    };
+
+    var isXYWithinRange = function (clientX, clientY, range) {
+      if (range.collapsed) {
+        return false;
+      }
+
+      return Arr.foldl(range.getClientRects(), function (state, rect) {
+        return state || containsXY(rect, clientX, clientY);
+      }, false);
+    };
+
+    return {
+      isXYWithinRange: isXYWithinRange
+    };
+  }
+);
+/**
+ * Plugin.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+/**
+ * This class contains all core logic for the contextmenu plugin.
+ *
+ * @class tinymce.contextmenu.Plugin
+ * @private
+ */
+define(
+  'tinymce.plugins.contextmenu.Plugin',
+  [
+    'tinymce.core.dom.DOMUtils',
+    'tinymce.core.Env',
+    'tinymce.core.PluginManager',
+    'tinymce.core.ui.Menu',
+    'tinymce.core.util.Tools',
+    'tinymce.plugins.contextmenu.RangePoint'
+  ],
+  function (DOMUtils, Env, PluginManager, Menu, Tools, RangePoint) {
+    var DOM = DOMUtils.DOM;
+
+    PluginManager.add('contextmenu', function (editor) {
+      var menu, visibleState, contextmenuNeverUseNative = editor.settings.contextmenu_never_use_native;
+
+      var isNativeOverrideKeyEvent = function (e) {
+        return e.ctrlKey && !contextmenuNeverUseNative;
+      };
+
+      var isMacWebKit = function () {
+        return Env.mac && Env.webkit;
+      };
+
+      var isContextMenuVisible = function () {
+        return visibleState === true;
+      };
+
+      var isImage = function (elm) {
+        return elm && elm.nodeName === 'IMG';
+      };
+
+      var isEventOnImageOutsideRange = function (evt, range) {
+        return isImage(evt.target) && RangePoint.isXYWithinRange(evt.clientX, evt.clientY, range) === false;
+      };
+
+      /**
+       * This takes care of a os x native issue where it expands the selection
+       * to the word at the caret position to do "lookups". Since we are overriding
+       * the context menu we also need to override this expanding so the behavior becomes
+       * normalized. Firefox on os x doesn't expand to the word when using the context menu.
+       */
+      editor.on('mousedown', function (e) {
+        if (isMacWebKit() && e.button === 2 && !isNativeOverrideKeyEvent(e) && editor.selection.isCollapsed()) {
+          editor.once('contextmenu', function (e2) {
+            if (!isImage(e2.target)) {
+              editor.selection.placeCaretAt(e2.clientX, e2.clientY);
+            }
+          });
+        }
+      });
+
+      editor.on('contextmenu', function (e) {
+        var contextmenu;
+
+        if (isNativeOverrideKeyEvent(e)) {
+          return;
+        }
+
+        if (isEventOnImageOutsideRange(e, editor.selection.getRng())) {
+          editor.selection.select(e.target);
+        }
+
+        e.preventDefault();
+        contextmenu = editor.settings.contextmenu || 'copy cut paste | link image inserttable | cell row column deletetable | teamuplinknewtab';
+
+        // Render menu
+        if (!menu) {
+          var items = [];
+
+          Tools.each(contextmenu.split(/[ ,]/), function (name) {
+            var item = editor.menuItems[name];
+
+            if (name == '|') {
+              item = { text: name };
+            }
+
+            if (item) {
+              item.shortcut = ''; // Hide shortcuts
+              items.push(item);
+            }
+          });
+
+          for (var i = 0; i < items.length; i++) {
+            if (items[i].text == '|') {
+              if (i === 0 || i == items.length - 1) {
+                items.splice(i, 1);
+              }
+            }
+          }
+
+          menu = new Menu({
+            items: items,
+            context: 'contextmenu',
+            classes: 'contextmenu'
+          }).renderTo();
+
+          menu.on('hide', function (e) {
+            if (e.control === this) {
+              visibleState = false;
+            }
+          });
+
+          editor.on('remove', function () {
+            menu.remove();
+            menu = null;
+          });
+
+        } else {
+          menu.show();
+        }
+
+        // Position menu
+        var pos = { x: e.pageX, y: e.pageY };
+
+        if (!editor.inline) {
+          pos = DOM.getPos(editor.getContentAreaContainer());
+          pos.x += e.clientX;
+          pos.y += e.clientY;
+        }
+
+        menu.moveTo(pos.x, pos.y);
+        visibleState = true;
+      });
+
+      return {
+        isContextMenuVisible: isContextMenuVisible
+      };
+    });
+    return function () { };
+  }
+);
+dem('tinymce.plugins.contextmenu.Plugin')();
+})();
+(function () {
+
+var defs = {}; // id -> {dependencies, definition, instance (possibly undefined)}
+
+// Used when there is no 'main' module.
+// The name is probably (hopefully) unique so minification removes for releases.
+var register_3795 = function (id) {
+  var module = dem(id);
+  var fragments = id.split('.');
+  var target = Function('return this;')();
+  for (var i = 0; i < fragments.length - 1; ++i) {
+    if (target[fragments[i]] === undefined)
+      target[fragments[i]] = {};
+    target = target[fragments[i]];
+  }
+  target[fragments[fragments.length - 1]] = module;
+};
+
+var instantiate = function (id) {
+  var actual = defs[id];
+  var dependencies = actual.deps;
+  var definition = actual.defn;
+  var len = dependencies.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances[i] = dem(dependencies[i]);
+  var defResult = definition.apply(null, instances);
+  if (defResult === undefined)
+     throw 'module [' + id + '] returned undefined';
+  actual.instance = defResult;
+};
+
+var def = function (id, dependencies, definition) {
+  if (typeof id !== 'string')
+    throw 'module id must be a string';
+  else if (dependencies === undefined)
+    throw 'no dependencies for ' + id;
+  else if (definition === undefined)
+    throw 'no definition function for ' + id;
+  defs[id] = {
+    deps: dependencies,
+    defn: definition,
+    instance: undefined
+  };
+};
+
+var dem = function (id) {
+  var actual = defs[id];
+  if (actual === undefined)
+    throw 'module [' + id + '] was undefined';
+  else if (actual.instance === undefined)
+    instantiate(id);
+  return actual.instance;
+};
+
+var req = function (ids, callback) {
+  var len = ids.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances.push(dem(ids[i]));
+  callback.apply(null, callback);
+};
+
+var ephox = {};
+
+ephox.bolt = {
+  module: {
+    api: {
+      define: def,
+      require: req,
+      demand: dem
+    }
+  }
+};
+
+var define = def;
+var require = req;
+var demand = dem;
+// this helps with minificiation when using a lot of global references
+var defineGlobal = function (id, ref) {
+  define(id, [], function () { return ref; });
+};
+/*jsc
+["tinymce.plugins.lists.Plugin","tinymce.core.PluginManager","tinymce.core.util.Tools","tinymce.core.util.VK","tinymce.plugins.lists.actions.Indent","tinymce.plugins.lists.actions.Outdent","tinymce.plugins.lists.actions.ToggleList","tinymce.plugins.lists.core.Delete","tinymce.plugins.lists.core.NodeType","tinymce.plugins.lists.core.Selection","global!tinymce.util.Tools.resolve","tinymce.core.dom.DOMUtils","tinymce.plugins.lists.core.Bookmark","tinymce.core.dom.DomQuery","tinymce.plugins.lists.core.NormalizeLists","tinymce.plugins.lists.core.SplitList","tinymce.plugins.lists.core.TextBlock","tinymce.core.dom.BookmarkManager","tinymce.core.dom.RangeUtils","tinymce.core.dom.TreeWalker","tinymce.plugins.lists.core.Range","tinymce.core.Env"]
+jsc*/
+defineGlobal("global!tinymce.util.Tools.resolve", tinymce.util.Tools.resolve);
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.PluginManager',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.PluginManager');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.util.Tools',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.util.Tools');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.util.VK',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.util.VK');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.dom.DOMUtils',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.dom.DOMUtils');
+  }
+);
+
+/**
+ * NodeType.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.lists.core.NodeType',
+  [
+  ],
+  function () {
+    var isTextNode = function (node) {
+      return node && node.nodeType === 3;
+    };
+
+    var isListNode = function (node) {
+      return node && (/^(OL|UL|DL)$/).test(node.nodeName);
+    };
+
+    var isListItemNode = function (node) {
+      return node && /^(LI|DT|DD)$/.test(node.nodeName);
+    };
+
+    var isBr = function (node) {
+      return node && node.nodeName === 'BR';
+    };
+
+    var isFirstChild = function (node) {
+      return node.parentNode.firstChild === node;
+    };
+
+    var isLastChild = function (node) {
+      return node.parentNode.lastChild === node;
+    };
+
+    var isTextBlock = function (editor, node) {
+      return node && !!editor.schema.getTextBlockElements()[node.nodeName];
+    };
+
+    var isBlock = function (node, blockElements) {
+      return node && node.nodeName in blockElements;
+    };
+
+    var isBogusBr = function (dom, node) {
+      if (!isBr(node)) {
+        return false;
+      }
+
+      if (dom.isBlock(node.nextSibling) && !isBr(node.previousSibling)) {
+        return true;
+      }
+
+      return false;
+    };
+
+    var isEmpty = function (dom, elm, keepBookmarks) {
+      var empty = dom.isEmpty(elm);
+
+      if (keepBookmarks && dom.select('span[data-mce-type=bookmark]', elm).length > 0) {
+        return false;
+      }
+
+      return empty;
+    };
+
+    var isChildOfBody = function (dom, elm) {
+      return dom.isChildOf(elm, dom.getRoot());
+    };
+
+    return {
+      isTextNode: isTextNode,
+      isListNode: isListNode,
+      isListItemNode: isListItemNode,
+      isBr: isBr,
+      isFirstChild: isFirstChild,
+      isLastChild: isLastChild,
+      isTextBlock: isTextBlock,
+      isBlock: isBlock,
+      isBogusBr: isBogusBr,
+      isEmpty: isEmpty,
+      isChildOfBody: isChildOfBody
+    };
+  }
+);
+
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.dom.RangeUtils',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.dom.RangeUtils');
+  }
+);
+
+/**
+ * Range.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.lists.core.Range',
+  [
+    'tinymce.core.dom.RangeUtils',
+    'tinymce.plugins.lists.core.NodeType'
+  ],
+  function (RangeUtils, NodeType) {
+    var getNormalizedEndPoint = function (container, offset) {
+      var node = RangeUtils.getNode(container, offset);
+
+      if (NodeType.isListItemNode(container) && NodeType.isTextNode(node)) {
+        var textNodeOffset = offset >= container.childNodes.length ? node.data.length : 0;
+        return { container: node, offset: textNodeOffset };
+      }
+
+      return { container: container, offset: offset };
+    };
+
+    var normalizeRange = function (rng) {
+      var outRng = rng.cloneRange();
+
+      var rangeStart = getNormalizedEndPoint(rng.startContainer, rng.startOffset);
+      outRng.setStart(rangeStart.container, rangeStart.offset);
+
+      var rangeEnd = getNormalizedEndPoint(rng.endContainer, rng.endOffset);
+      outRng.setEnd(rangeEnd.container, rangeEnd.offset);
+
+      return outRng;
+    };
+
+    return {
+      getNormalizedEndPoint: getNormalizedEndPoint,
+      normalizeRange: normalizeRange
+    };
+  }
+);
+
+
+/**
+ * Bookmark.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.lists.core.Bookmark',
+  [
+    'tinymce.core.dom.DOMUtils',
+    'tinymce.plugins.lists.core.NodeType',
+    'tinymce.plugins.lists.core.Range'
+  ],
+  function (DOMUtils, NodeType, Range) {
+    var DOM = DOMUtils.DOM;
+
+    /**
+     * Returns a range bookmark. This will convert indexed bookmarks into temporary span elements with
+     * index 0 so that they can be restored properly after the DOM has been modified. Text bookmarks will not have spans
+     * added to them since they can be restored after a dom operation.
+     *
+     * So this: <p><b>|</b><b>|</b></p>
+     * becomes: <p><b><span data-mce-type="bookmark">|</span></b><b data-mce-type="bookmark">|</span></b></p>
+     *
+     * @param  {DOMRange} rng DOM Range to get bookmark on.
+     * @return {Object} Bookmark object.
+     */
+    var createBookmark = function (rng) {
+      var bookmark = {};
+
+      var setupEndPoint = function (start) {
+        var offsetNode, container, offset;
+
+        container = rng[start ? 'startContainer' : 'endContainer'];
+        offset = rng[start ? 'startOffset' : 'endOffset'];
+
+        if (container.nodeType === 1) {
+          offsetNode = DOM.create('span', { 'data-mce-type': 'bookmark' });
+
+          if (container.hasChildNodes()) {
+            offset = Math.min(offset, container.childNodes.length - 1);
+
+            if (start) {
+              container.insertBefore(offsetNode, container.childNodes[offset]);
+            } else {
+              DOM.insertAfter(offsetNode, container.childNodes[offset]);
+            }
+          } else {
+            container.appendChild(offsetNode);
+          }
+
+          container = offsetNode;
+          offset = 0;
+        }
+
+        bookmark[start ? 'startContainer' : 'endContainer'] = container;
+        bookmark[start ? 'startOffset' : 'endOffset'] = offset;
+      };
+
+      setupEndPoint(true);
+
+      if (!rng.collapsed) {
+        setupEndPoint();
+      }
+
+      return bookmark;
+    };
+
+    var resolveBookmark = function (bookmark) {
+      function restoreEndPoint(start) {
+        var container, offset, node;
+
+        var nodeIndex = function (container) {
+          var node = container.parentNode.firstChild, idx = 0;
+
+          while (node) {
+            if (node === container) {
+              return idx;
+            }
+
+            // Skip data-mce-type=bookmark nodes
+            if (node.nodeType !== 1 || node.getAttribute('data-mce-type') !== 'bookmark') {
+              idx++;
+            }
+
+            node = node.nextSibling;
+          }
+
+          return -1;
+        };
+
+        container = node = bookmark[start ? 'startContainer' : 'endContainer'];
+        offset = bookmark[start ? 'startOffset' : 'endOffset'];
+
+        if (!container) {
+          return;
+        }
+
+        if (container.nodeType === 1) {
+          offset = nodeIndex(container);
+          container = container.parentNode;
+          DOM.remove(node);
+        }
+
+        bookmark[start ? 'startContainer' : 'endContainer'] = container;
+        bookmark[start ? 'startOffset' : 'endOffset'] = offset;
+      }
+
+      restoreEndPoint(true);
+      restoreEndPoint();
+
+      var rng = DOM.createRng();
+
+      rng.setStart(bookmark.startContainer, bookmark.startOffset);
+
+      if (bookmark.endContainer) {
+        rng.setEnd(bookmark.endContainer, bookmark.endOffset);
+      }
+
+      return Range.normalizeRange(rng);
+    };
+
+    return {
+      createBookmark: createBookmark,
+      resolveBookmark: resolveBookmark
+    };
+  }
+);
+
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.dom.DomQuery',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.dom.DomQuery');
+  }
+);
+
+/**
+ * Selection.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.lists.core.Selection',
+  [
+    'tinymce.core.dom.DomQuery',
+    'tinymce.core.util.Tools',
+    'tinymce.plugins.lists.core.NodeType'
+  ],
+  function (DomQuery, Tools, NodeType) {
+    var getParentList = function (editor) {
+      return editor.dom.getParent(editor.selection.getStart(true), 'OL,UL,DL');
+    };
+
+    var getSelectedSubLists = function (editor) {
+      var parentList = getParentList(editor);
+      return Tools.grep(editor.selection.getSelectedBlocks(), function (elm) {
+        return NodeType.isListNode(elm) && parentList !== elm;
+      });
+    };
+
+    var findParentListItemsNodes = function (editor, elms) {
+      var listItemsElms = Tools.map(elms, function (elm) {
+        var parentLi = editor.dom.getParent(elm, 'li,dd,dt', editor.getBody());
+
+        return parentLi ? parentLi : elm;
+      });
+
+      return DomQuery.unique(listItemsElms);
+    };
+
+    var getSelectedListItems = function (editor) {
+      var selectedBlocks = editor.selection.getSelectedBlocks();
+      return Tools.grep(findParentListItemsNodes(editor, selectedBlocks), function (block) {
+        return NodeType.isListItemNode(block);
+      });
+    };
+
+    return {
+      getParentList: getParentList,
+      getSelectedSubLists: getSelectedSubLists,
+      getSelectedListItems: getSelectedListItems
+    };
+  }
+);
+
+
+/**
+ * Indent.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.lists.actions.Indent',
+  [
+    'tinymce.core.dom.DOMUtils',
+    'tinymce.plugins.lists.core.Bookmark',
+    'tinymce.plugins.lists.core.NodeType',
+    'tinymce.plugins.lists.core.Selection'
+  ],
+  function (DOMUtils, Bookmark, NodeType, Selection) {
+    var DOM = DOMUtils.DOM;
+
+    var mergeLists = function (from, to) {
+      var node;
+
+      if (NodeType.isListNode(from)) {
+        while ((node = from.firstChild)) {
+          to.appendChild(node);
+        }
+
+        DOM.remove(from);
+      }
+    };
+
+    var indent = function (li) {
+      var sibling, newList, listStyle;
+
+      if (li.nodeName === 'DT') {
+        DOM.rename(li, 'DD');
+        return true;
+      }
+
+      sibling = li.previousSibling;
+
+      if (sibling && NodeType.isListNode(sibling)) {
+        sibling.appendChild(li);
+        return true;
+      }
+
+      if (sibling && sibling.nodeName === 'LI' && NodeType.isListNode(sibling.lastChild)) {
+        sibling.lastChild.appendChild(li);
+        mergeLists(li.lastChild, sibling.lastChild);
+        return true;
+      }
+
+      sibling = li.nextSibling;
+
+      if (sibling && NodeType.isListNode(sibling)) {
+        sibling.insertBefore(li, sibling.firstChild);
+        return true;
+      }
+
+      /*if (sibling && sibling.nodeName === 'LI' && isListNode(li.lastChild)) {
+        return false;
+      }*/
+
+      sibling = li.previousSibling;
+      if (sibling && sibling.nodeName === 'LI') {
+        newList = DOM.create(li.parentNode.nodeName);
+        listStyle = DOM.getStyle(li.parentNode, 'listStyleType');
+        if (listStyle) {
+          DOM.setStyle(newList, 'listStyleType', listStyle);
+        }
+        sibling.appendChild(newList);
+        newList.appendChild(li);
+        mergeLists(li.lastChild, newList);
+        return true;
+      }
+
+      return false;
+    };
+
+    var indentSelection = function (editor) {
+      var listElements = Selection.getSelectedListItems(editor);
+
+      if (listElements.length) {
+        var bookmark = Bookmark.createBookmark(editor.selection.getRng(true));
+
+        for (var i = 0; i < listElements.length; i++) {
+          if (!indent(listElements[i]) && i === 0) {
+            break;
+          }
+        }
+
+        editor.selection.setRng(Bookmark.resolveBookmark(bookmark));
+        editor.nodeChanged();
+
+        return true;
+      }
+    };
+
+    return {
+      indentSelection: indentSelection
+    };
+  }
+);
+
+
+/**
+ * NormalizeLists.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.lists.core.NormalizeLists',
+  [
+    'tinymce.core.dom.DOMUtils',
+    'tinymce.core.util.Tools',
+    'tinymce.plugins.lists.core.NodeType'
+  ],
+  function (DOMUtils, Tools, NodeType) {
+    var DOM = DOMUtils.DOM;
+
+    var normalizeList = function (dom, ul) {
+      var sibling, parentNode = ul.parentNode;
+
+      // Move UL/OL to previous LI if it's the only child of a LI
+      if (parentNode.nodeName === 'LI' && parentNode.firstChild === ul) {
+        sibling = parentNode.previousSibling;
+        if (sibling && sibling.nodeName === 'LI') {
+          sibling.appendChild(ul);
+
+          if (NodeType.isEmpty(dom, parentNode)) {
+            DOM.remove(parentNode);
+          }
+        } else {
+          DOM.setStyle(parentNode, 'listStyleType', 'none');
+        }
+      }
+
+      // Append OL/UL to previous LI if it's in a parent OL/UL i.e. old HTML4
+      if (NodeType.isListNode(parentNode)) {
+        sibling = parentNode.previousSibling;
+        if (sibling && sibling.nodeName === 'LI') {
+          sibling.appendChild(ul);
+        }
+      }
+    };
+
+    var normalizeLists = function (dom, element) {
+      Tools.each(Tools.grep(dom.select('ol,ul', element)), function (ul) {
+        normalizeList(dom, ul);
+      });
+    };
+
+    return {
+      normalizeList: normalizeList,
+      normalizeLists: normalizeLists
+    };
+  }
+);
+
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.Env',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.Env');
+  }
+);
+
+/**
+ * TextBlock.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.lists.core.TextBlock',
+  [
+    'tinymce.core.dom.DOMUtils',
+    'tinymce.core.Env',
+    'tinymce.plugins.lists.core.NodeType'
+  ],
+  function (DOMUtils, Env, NodeType) {
+    var DOM = DOMUtils.DOM;
+
+    var createNewTextBlock = function (editor, contentNode, blockName) {
+      var node, textBlock, fragment = DOM.createFragment(), hasContentNode;
+      var blockElements = editor.schema.getBlockElements();
+
+      if (editor.settings.forced_root_block) {
+        blockName = blockName || editor.settings.forced_root_block;
+      }
+
+      if (blockName) {
+        textBlock = DOM.create(blockName);
+
+        if (textBlock.tagName === editor.settings.forced_root_block) {
+          DOM.setAttribs(textBlock, editor.settings.forced_root_block_attrs);
+        }
+
+        if (!NodeType.isBlock(contentNode.firstChild, blockElements)) {
+          fragment.appendChild(textBlock);
+        }
+      }
+
+      if (contentNode) {
+        while ((node = contentNode.firstChild)) {
+          var nodeName = node.nodeName;
+
+          if (!hasContentNode && (nodeName !== 'SPAN' || node.getAttribute('data-mce-type') !== 'bookmark')) {
+            hasContentNode = true;
+          }
+
+          if (NodeType.isBlock(node, blockElements)) {
+            fragment.appendChild(node);
+            textBlock = null;
+          } else {
+            if (blockName) {
+              if (!textBlock) {
+                textBlock = DOM.create(blockName);
+                fragment.appendChild(textBlock);
+              }
+
+              textBlock.appendChild(node);
+            } else {
+              fragment.appendChild(node);
+            }
+          }
+        }
+      }
+
+      if (!editor.settings.forced_root_block) {
+        fragment.appendChild(DOM.create('br'));
+      } else {
+        // BR is needed in empty blocks on non IE browsers
+        if (!hasContentNode && (!Env.ie || Env.ie > 10)) {
+          textBlock.appendChild(DOM.create('br', { 'data-mce-bogus': '1' }));
+        }
+      }
+
+      return fragment;
+    };
+
+    return {
+      createNewTextBlock: createNewTextBlock
+    };
+  }
+);
+
+/**
+ * SplitList.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.lists.core.SplitList',
+  [
+    'tinymce.core.dom.DOMUtils',
+    'tinymce.plugins.lists.core.NodeType',
+    'tinymce.plugins.lists.core.TextBlock',
+    'tinymce.core.util.Tools'
+  ],
+  function (DOMUtils, NodeType, TextBlock, Tools) {
+    var DOM = DOMUtils.DOM;
+
+    var splitList = function (editor, ul, li, newBlock) {
+      var tmpRng, fragment, bookmarks, node;
+
+      var removeAndKeepBookmarks = function (targetNode) {
+        Tools.each(bookmarks, function (node) {
+          targetNode.parentNode.insertBefore(node, li.parentNode);
+        });
+
+        DOM.remove(targetNode);
+      };
+
+      bookmarks = DOM.select('span[data-mce-type="bookmark"]', ul);
+      newBlock = newBlock || TextBlock.createNewTextBlock(editor, li);
+      tmpRng = DOM.createRng();
+      tmpRng.setStartAfter(li);
+      tmpRng.setEndAfter(ul);
+      fragment = tmpRng.extractContents();
+
+      for (node = fragment.firstChild; node; node = node.firstChild) {
+        if (node.nodeName === 'LI' && editor.dom.isEmpty(node)) {
+          DOM.remove(node);
+          break;
+        }
+      }
+
+      if (!editor.dom.isEmpty(fragment)) {
+        DOM.insertAfter(fragment, ul);
+      }
+
+      DOM.insertAfter(newBlock, ul);
+
+      if (NodeType.isEmpty(editor.dom, li.parentNode)) {
+        removeAndKeepBookmarks(li.parentNode);
+      }
+
+      DOM.remove(li);
+
+      if (NodeType.isEmpty(editor.dom, ul)) {
+        DOM.remove(ul);
+      }
+    };
+
+    return {
+      splitList: splitList
+    };
+  }
+);
+
+
+/**
+ * Outdent.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.lists.actions.Outdent',
+  [
+    'tinymce.core.dom.DOMUtils',
+    'tinymce.plugins.lists.core.Bookmark',
+    'tinymce.plugins.lists.core.NodeType',
+    'tinymce.plugins.lists.core.NormalizeLists',
+    'tinymce.plugins.lists.core.Selection',
+    'tinymce.plugins.lists.core.SplitList',
+    'tinymce.plugins.lists.core.TextBlock'
+  ],
+  function (DOMUtils, Bookmark, NodeType, NormalizeLists, Selection, SplitList, TextBlock) {
+    var DOM = DOMUtils.DOM;
+
+    var removeEmptyLi = function (dom, li) {
+      if (NodeType.isEmpty(dom, li)) {
+        DOM.remove(li);
+      }
+    };
+
+    var outdent = function (editor, li) {
+      var ul = li.parentNode, ulParent = ul.parentNode, newBlock;
+
+      if (ul === editor.getBody()) {
+        return true;
+      }
+
+      if (li.nodeName === 'DD') {
+        DOM.rename(li, 'DT');
+        return true;
+      }
+
+      if (NodeType.isFirstChild(li) && NodeType.isLastChild(li)) {
+        if (ulParent.nodeName === "LI") {
+          DOM.insertAfter(li, ulParent);
+          removeEmptyLi(editor.dom, ulParent);
+          DOM.remove(ul);
+        } else if (NodeType.isListNode(ulParent)) {
+          DOM.remove(ul, true);
+        } else {
+          ulParent.insertBefore(TextBlock.createNewTextBlock(editor, li), ul);
+          DOM.remove(ul);
+        }
+
+        return true;
+      } else if (NodeType.isFirstChild(li)) {
+        if (ulParent.nodeName === "LI") {
+          DOM.insertAfter(li, ulParent);
+          li.appendChild(ul);
+          removeEmptyLi(editor.dom, ulParent);
+        } else if (NodeType.isListNode(ulParent)) {
+          ulParent.insertBefore(li, ul);
+        } else {
+          ulParent.insertBefore(TextBlock.createNewTextBlock(editor, li), ul);
+          DOM.remove(li);
+        }
+
+        return true;
+      } else if (NodeType.isLastChild(li)) {
+        if (ulParent.nodeName === "LI") {
+          DOM.insertAfter(li, ulParent);
+        } else if (NodeType.isListNode(ulParent)) {
+          DOM.insertAfter(li, ul);
+        } else {
+          DOM.insertAfter(TextBlock.createNewTextBlock(editor, li), ul);
+          DOM.remove(li);
+        }
+
+        return true;
+      }
+
+      if (ulParent.nodeName === 'LI') {
+        ul = ulParent;
+        newBlock = TextBlock.createNewTextBlock(editor, li, 'LI');
+      } else if (NodeType.isListNode(ulParent)) {
+        newBlock = TextBlock.createNewTextBlock(editor, li, 'LI');
+      } else {
+        newBlock = TextBlock.createNewTextBlock(editor, li);
+      }
+
+      SplitList.splitList(editor, ul, li, newBlock);
+      NormalizeLists.normalizeLists(editor.dom, ul.parentNode);
+
+      return true;
+    };
+
+    var outdentSelection = function (editor) {
+      var listElements = Selection.getSelectedListItems(editor);
+
+      if (listElements.length) {
+        var bookmark = Bookmark.createBookmark(editor.selection.getRng(true));
+        var i, y, root = editor.getBody();
+
+        i = listElements.length;
+        while (i--) {
+          var node = listElements[i].parentNode;
+
+          while (node && node !== root) {
+            y = listElements.length;
+            while (y--) {
+              if (listElements[y] === node) {
+                listElements.splice(i, 1);
+                break;
+              }
+            }
+
+            node = node.parentNode;
+          }
+        }
+
+        for (i = 0; i < listElements.length; i++) {
+          if (!outdent(editor, listElements[i]) && i === 0) {
+            break;
+          }
+        }
+
+        editor.selection.setRng(Bookmark.resolveBookmark(bookmark));
+        editor.nodeChanged();
+
+        return true;
+      }
+    };
+
+    return {
+      outdent: outdent,
+      outdentSelection: outdentSelection
+    };
+  }
+);
+
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.dom.BookmarkManager',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.dom.BookmarkManager');
+  }
+);
+
+/**
+ * ToggleList.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.lists.actions.ToggleList',
+  [
+    'tinymce.core.dom.BookmarkManager',
+    'tinymce.core.util.Tools',
+    'tinymce.plugins.lists.actions.Outdent',
+    'tinymce.plugins.lists.core.Bookmark',
+    'tinymce.plugins.lists.core.NodeType',
+    'tinymce.plugins.lists.core.NormalizeLists',
+    'tinymce.plugins.lists.core.Selection',
+    'tinymce.plugins.lists.core.SplitList'
+  ],
+  function (BookmarkManager, Tools, Outdent, Bookmark, NodeType, NormalizeLists, Selection, SplitList) {
+    var updateListStyle = function (dom, el, detail) {
+      var type = detail['list-style-type'] ? detail['list-style-type'] : null;
+      dom.setStyle(el, 'list-style-type', type);
+    };
+
+    var setAttribs = function (elm, attrs) {
+      Tools.each(attrs, function (value, key) {
+        elm.setAttribute(key, value);
+      });
+    };
+
+    var updateListAttrs = function (dom, el, detail) {
+      setAttribs(el, detail['list-attributes']);
+      Tools.each(dom.select('li', el), function (li) {
+        setAttribs(li, detail['list-item-attributes']);
+      });
+    };
+
+    var updateListWithDetails = function (dom, el, detail) {
+      updateListStyle(dom, el, detail);
+      updateListAttrs(dom, el, detail);
+    };
+
+    var getEndPointNode = function (editor, rng, start) {
+      var container, offset, root = editor.getBody();
+
+      container = rng[start ? 'startContainer' : 'endContainer'];
+      offset = rng[start ? 'startOffset' : 'endOffset'];
+
+      // Resolve node index
+      if (container.nodeType === 1) {
+        container = container.childNodes[Math.min(offset, container.childNodes.length - 1)] || container;
+      }
+
+      while (container.parentNode !== root) {
+        if (NodeType.isTextBlock(editor, container)) {
+          return container;
+        }
+
+        if (/^(TD|TH)$/.test(container.parentNode.nodeName)) {
+          return container;
+        }
+
+        container = container.parentNode;
+      }
+
+      return container;
+    };
+
+    var getSelectedTextBlocks = function (editor, rng) {
+      var textBlocks = [], root = editor.getBody(), dom = editor.dom;
+
+      var startNode = getEndPointNode(editor, rng, true);
+      var endNode = getEndPointNode(editor, rng, false);
+      var block, siblings = [];
+
+      for (var node = startNode; node; node = node.nextSibling) {
+        siblings.push(node);
+
+        if (node === endNode) {
+          break;
+        }
+      }
+
+      Tools.each(siblings, function (node) {
+        if (NodeType.isTextBlock(editor, node)) {
+          textBlocks.push(node);
+          block = null;
+          return;
+        }
+
+        if (dom.isBlock(node) || NodeType.isBr(node)) {
+          if (NodeType.isBr(node)) {
+            dom.remove(node);
+          }
+
+          block = null;
+          return;
+        }
+
+        var nextSibling = node.nextSibling;
+        if (BookmarkManager.isBookmarkNode(node)) {
+          if (NodeType.isTextBlock(editor, nextSibling) || (!nextSibling && node.parentNode === root)) {
+            block = null;
+            return;
+          }
+        }
+
+        if (!block) {
+          block = dom.create('p');
+          node.parentNode.insertBefore(block, node);
+          textBlocks.push(block);
+        }
+
+        block.appendChild(node);
+      });
+
+      return textBlocks;
+    };
+
+    var applyList = function (editor, listName, detail) {
+      var rng = editor.selection.getRng(true), bookmark, listItemName = 'LI';
+      var dom = editor.dom;
+
+      detail = detail ? detail : {};
+
+      if (dom.getContentEditable(editor.selection.getNode()) === "false") {
+        return;
+      }
+
+      listName = listName.toUpperCase();
+
+      if (listName === 'DL') {
+        listItemName = 'DT';
+      }
+
+      bookmark = Bookmark.createBookmark(rng);
+
+      Tools.each(getSelectedTextBlocks(editor, rng), function (block) {
+        var listBlock, sibling;
+
+        var hasCompatibleStyle = function (sib) {
+          var sibStyle = dom.getStyle(sib, 'list-style-type');
+          var detailStyle = detail ? detail['list-style-type'] : '';
+
+          detailStyle = detailStyle === null ? '' : detailStyle;
+
+          return sibStyle === detailStyle;
+        };
+
+        sibling = block.previousSibling;
+        if (sibling && NodeType.isListNode(sibling) && sibling.nodeName === listName && hasCompatibleStyle(sibling)) {
+          listBlock = sibling;
+          block = dom.rename(block, listItemName);
+          sibling.appendChild(block);
+        } else {
+          listBlock = dom.create(listName);
+          block.parentNode.insertBefore(listBlock, block);
+          listBlock.appendChild(block);
+          block = dom.rename(block, listItemName);
+        }
+
+        updateListWithDetails(dom, listBlock, detail);
+        mergeWithAdjacentLists(editor.dom, listBlock);
+      });
+
+      editor.selection.setRng(Bookmark.resolveBookmark(bookmark));
+    };
+
+    var removeList = function (editor) {
+      var bookmark = Bookmark.createBookmark(editor.selection.getRng(true)), root = editor.getBody();
+      var listItems = Selection.getSelectedListItems(editor);
+      var emptyListItems = Tools.grep(listItems, function (li) {
+        return editor.dom.isEmpty(li);
+      });
+
+      listItems = Tools.grep(listItems, function (li) {
+        return !editor.dom.isEmpty(li);
+      });
+
+      Tools.each(emptyListItems, function (li) {
+        if (NodeType.isEmpty(editor.dom, li)) {
+          Outdent.outdent(editor, li);
+          return;
+        }
+      });
+
+      Tools.each(listItems, function (li) {
+        var node, rootList;
+
+        if (li.parentNode === editor.getBody()) {
+          return;
+        }
+
+        for (node = li; node && node !== root; node = node.parentNode) {
+          if (NodeType.isListNode(node)) {
+            rootList = node;
+          }
+        }
+
+        SplitList.splitList(editor, rootList, li);
+        NormalizeLists.normalizeLists(editor.dom, rootList.parentNode);
+      });
+
+      editor.selection.setRng(Bookmark.resolveBookmark(bookmark));
+    };
+
+    var isValidLists = function (list1, list2) {
+      return list1 && list2 && NodeType.isListNode(list1) && list1.nodeName === list2.nodeName;
+    };
+
+    var hasSameListStyle = function (dom, list1, list2) {
+      var targetStyle = dom.getStyle(list1, 'list-style-type', true);
+      var style = dom.getStyle(list2, 'list-style-type', true);
+      return targetStyle === style;
+    };
+
+    var hasSameClasses = function (elm1, elm2) {
+      return elm1.className === elm2.className;
+    };
+
+    var shouldMerge = function (dom, list1, list2) {
+      return isValidLists(list1, list2) && hasSameListStyle(dom, list1, list2) && hasSameClasses(list1, list2);
+    };
+
+    var mergeWithAdjacentLists = function (dom, listBlock) {
+      var sibling, node;
+
+      sibling = listBlock.nextSibling;
+      if (shouldMerge(dom, listBlock, sibling)) {
+        while ((node = sibling.firstChild)) {
+          listBlock.appendChild(node);
+        }
+
+        dom.remove(sibling);
+      }
+
+      sibling = listBlock.previousSibling;
+      if (shouldMerge(dom, listBlock, sibling)) {
+        while ((node = sibling.lastChild)) {
+          listBlock.insertBefore(node, listBlock.firstChild);
+        }
+
+        dom.remove(sibling);
+      }
+    };
+
+    var updateList = function (dom, list, listName, detail) {
+      if (list.nodeName !== listName) {
+        var newList = dom.rename(list, listName);
+        updateListWithDetails(dom, newList, detail);
+      } else {
+        updateListWithDetails(dom, list, detail);
+      }
+    };
+
+    var toggleMultipleLists = function (editor, parentList, lists, listName, detail) {
+      if (parentList.nodeName === listName && !hasListStyleDetail(detail)) {
+        removeList(editor, listName);
+      } else {
+        var bookmark = Bookmark.createBookmark(editor.selection.getRng(true));
+
+        Tools.each([parentList].concat(lists), function (elm) {
+          updateList(editor.dom, elm, listName, detail);
+        });
+
+        editor.selection.setRng(Bookmark.resolveBookmark(bookmark));
+      }
+    };
+
+    var hasListStyleDetail = function (detail) {
+      return 'list-style-type' in detail;
+    };
+
+    var toggleSingleList = function (editor, parentList, listName, detail) {
+      if (parentList === editor.getBody()) {
+        return;
+      }
+
+      if (parentList) {
+        if (parentList.nodeName === listName && !hasListStyleDetail(detail)) {
+          removeList(editor, listName);
+        } else {
+          var bookmark = Bookmark.createBookmark(editor.selection.getRng(true));
+          updateListWithDetails(editor.dom, parentList, detail);
+          mergeWithAdjacentLists(editor.dom, editor.dom.rename(parentList, listName));
+          editor.selection.setRng(Bookmark.resolveBookmark(bookmark));
+        }
+      } else {
+        applyList(editor, listName, detail);
+      }
+    };
+
+    var toggleList = function (editor, listName, detail) {
+      var parentList = Selection.getParentList(editor);
+      var selectedSubLists = Selection.getSelectedSubLists(editor);
+
+      detail = detail ? detail : {};
+
+      if (parentList && selectedSubLists.length > 0) {
+        toggleMultipleLists(editor, parentList, selectedSubLists, listName, detail);
+      } else {
+        toggleSingleList(editor, parentList, listName, detail);
+      }
+    };
+
+    return {
+      toggleList: toggleList,
+      removeList: removeList,
+      mergeWithAdjacentLists: mergeWithAdjacentLists
+    };
+  }
+);
+
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.dom.TreeWalker',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.dom.TreeWalker');
+  }
+);
+
+/**
+ * Delete.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.lists.core.Delete',
+  [
+    'tinymce.core.dom.RangeUtils',
+    'tinymce.core.dom.TreeWalker',
+    'tinymce.core.util.VK',
+    'tinymce.plugins.lists.actions.ToggleList',
+    'tinymce.plugins.lists.core.Bookmark',
+    'tinymce.plugins.lists.core.NodeType',
+    'tinymce.plugins.lists.core.NormalizeLists',
+    'tinymce.plugins.lists.core.Range',
+    'tinymce.plugins.lists.core.Selection'
+  ],
+  function (RangeUtils, TreeWalker, VK, ToggleList, Bookmark, NodeType, NormalizeLists, Range, Selection) {
+    var findNextCaretContainer = function (editor, rng, isForward) {
+      var node = rng.startContainer, offset = rng.startOffset;
+      var nonEmptyBlocks, walker;
+
+      if (node.nodeType === 3 && (isForward ? offset < node.data.length : offset > 0)) {
+        return node;
+      }
+
+      nonEmptyBlocks = editor.schema.getNonEmptyElements();
+      if (node.nodeType === 1) {
+        node = RangeUtils.getNode(node, offset);
+      }
+
+      walker = new TreeWalker(node, editor.getBody());
+
+      // Delete at <li>|<br></li> then jump over the bogus br
+      if (isForward) {
+        if (NodeType.isBogusBr(editor.dom, node)) {
+          walker.next();
+        }
+      }
+
+      while ((node = walker[isForward ? 'next' : 'prev2']())) {
+        if (node.nodeName === 'LI' && !node.hasChildNodes()) {
+          return node;
+        }
+
+        if (nonEmptyBlocks[node.nodeName]) {
+          return node;
+        }
+
+        if (node.nodeType === 3 && node.data.length > 0) {
+          return node;
+        }
+      }
+    };
+
+    var hasOnlyOneBlockChild = function (dom, elm) {
+      var childNodes = elm.childNodes;
+      return childNodes.length === 1 && !NodeType.isListNode(childNodes[0]) && dom.isBlock(childNodes[0]);
+    };
+
+    var unwrapSingleBlockChild = function (dom, elm) {
+      if (hasOnlyOneBlockChild(dom, elm)) {
+        dom.remove(elm.firstChild, true);
+      }
+    };
+
+    var moveChildren = function (dom, fromElm, toElm) {
+      var node, targetElm;
+
+      targetElm = hasOnlyOneBlockChild(dom, toElm) ? toElm.firstChild : toElm;
+      unwrapSingleBlockChild(dom, fromElm);
+
+      if (!NodeType.isEmpty(dom, fromElm, true)) {
+        while ((node = fromElm.firstChild)) {
+          targetElm.appendChild(node);
+        }
+      }
+    };
+
+    var mergeLiElements = function (dom, fromElm, toElm) {
+      var node, listNode, ul = fromElm.parentNode;
+
+      if (!NodeType.isChildOfBody(dom, fromElm) || !NodeType.isChildOfBody(dom, toElm)) {
+        return;
+      }
+
+      if (NodeType.isListNode(toElm.lastChild)) {
+        listNode = toElm.lastChild;
+      }
+
+      if (ul === toElm.lastChild) {
+        if (NodeType.isBr(ul.previousSibling)) {
+          dom.remove(ul.previousSibling);
+        }
+      }
+
+      node = toElm.lastChild;
+      if (node && NodeType.isBr(node) && fromElm.hasChildNodes()) {
+        dom.remove(node);
+      }
+
+      if (NodeType.isEmpty(dom, toElm, true)) {
+        dom.$(toElm).empty();
+      }
+
+      moveChildren(dom, fromElm, toElm);
+
+      if (listNode) {
+        toElm.appendChild(listNode);
+      }
+
+      dom.remove(fromElm);
+
+      if (NodeType.isEmpty(dom, ul) && ul !== dom.getRoot()) {
+        dom.remove(ul);
+      }
+    };
+
+    var mergeIntoEmptyLi = function (editor, fromLi, toLi) {
+      editor.dom.$(toLi).empty();
+      mergeLiElements(editor.dom, fromLi, toLi);
+      editor.selection.setCursorLocation(toLi);
+    };
+
+    var mergeForward = function (editor, rng, fromLi, toLi) {
+      var dom = editor.dom;
+
+      if (dom.isEmpty(toLi)) {
+        mergeIntoEmptyLi(editor, fromLi, toLi);
+      } else {
+        var bookmark = Bookmark.createBookmark(rng);
+        mergeLiElements(dom, fromLi, toLi);
+        editor.selection.setRng(Bookmark.resolveBookmark(bookmark));
+      }
+    };
+
+    var mergeBackward = function (editor, rng, fromLi, toLi) {
+      var bookmark = Bookmark.createBookmark(rng);
+      mergeLiElements(editor.dom, fromLi, toLi);
+      editor.selection.setRng(Bookmark.resolveBookmark(bookmark));
+    };
+
+    var backspaceDeleteFromListToListCaret = function (editor, isForward) {
+      var dom = editor.dom, selection = editor.selection;
+      var li = dom.getParent(selection.getStart(), 'LI'), ul, rng, otherLi;
+
+      if (li) {
+        ul = li.parentNode;
+        if (ul === editor.getBody() && NodeType.isEmpty(dom, ul)) {
+          return true;
+        }
+
+        rng = Range.normalizeRange(selection.getRng(true));
+        otherLi = dom.getParent(findNextCaretContainer(editor, rng, isForward), 'LI');
+
+        if (otherLi && otherLi !== li) {
+          if (isForward) {
+            mergeForward(editor, rng, otherLi, li);
+          } else {
+            mergeBackward(editor, rng, li, otherLi);
+          }
+
+          return true;
+        } else if (!otherLi) {
+          if (!isForward && ToggleList.removeList(editor, ul.nodeName)) {
+            return true;
+          }
+        }
+      }
+
+      return false;
+    };
+
+    var removeBlock = function (dom, block) {
+      var parentBlock = dom.getParent(block.parentNode, dom.isBlock);
+
+      dom.remove(block);
+      if (parentBlock && dom.isEmpty(parentBlock)) {
+        dom.remove(parentBlock);
+      }
+    };
+
+    var backspaceDeleteIntoListCaret = function (editor, isForward) {
+      var dom = editor.dom;
+      var block = dom.getParent(editor.selection.getStart(), dom.isBlock);
+
+      if (block && dom.isEmpty(block)) {
+        var rng = Range.normalizeRange(editor.selection.getRng(true));
+        var otherLi = dom.getParent(findNextCaretContainer(editor, rng, isForward), 'LI');
+
+        if (otherLi) {
+          editor.undoManager.transact(function () {
+            removeBlock(dom, block);
+            ToggleList.mergeWithAdjacentLists(dom, otherLi.parentNode);
+            editor.selection.select(otherLi, true);
+            editor.selection.collapse(isForward);
+          });
+
+          return true;
+        }
+      }
+
+      return false;
+    };
+
+    var backspaceDeleteCaret = function (editor, isForward) {
+      return backspaceDeleteFromListToListCaret(editor, isForward) || backspaceDeleteIntoListCaret(editor, isForward);
+    };
+
+    var backspaceDeleteRange = function (editor) {
+      var startListParent = editor.dom.getParent(editor.selection.getStart(), 'LI,DT,DD');
+
+      if (startListParent || Selection.getSelectedListItems(editor).length > 0) {
+        editor.undoManager.transact(function () {
+          editor.execCommand('Delete');
+          NormalizeLists.normalizeLists(editor.dom, editor.getBody());
+        });
+
+        return true;
+      }
+
+      return false;
+    };
+
+    var backspaceDelete = function (editor, isForward) {
+      return editor.selection.isCollapsed() ? backspaceDeleteCaret(editor, isForward) : backspaceDeleteRange(editor);
+    };
+
+    var setup = function (editor) {
+      editor.on('keydown', function (e) {
+        if (e.keyCode === VK.BACKSPACE) {
+          if (backspaceDelete(editor, false)) {
+            e.preventDefault();
+          }
+        } else if (e.keyCode === VK.DELETE) {
+          if (backspaceDelete(editor, true)) {
+            e.preventDefault();
+          }
+        }
+      });
+    };
+
+    return {
+      setup: setup,
+      backspaceDelete: backspaceDelete
+    };
+  }
+);
+
+
+/**
+ * plugin.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.lists.Plugin',
+  [
+    'tinymce.core.PluginManager',
+    'tinymce.core.util.Tools',
+    'tinymce.core.util.VK',
+    'tinymce.plugins.lists.actions.Indent',
+    'tinymce.plugins.lists.actions.Outdent',
+    'tinymce.plugins.lists.actions.ToggleList',
+    'tinymce.plugins.lists.core.Delete',
+    'tinymce.plugins.lists.core.NodeType',
+    'tinymce.plugins.lists.core.Selection'
+  ],
+  function (PluginManager, Tools, VK, Indent, Outdent, ToggleList, Delete, NodeType, Selection) {
+    var queryListCommandState = function (editor, listName) {
+      return function () {
+        var parentList = editor.dom.getParent(editor.selection.getStart(), 'UL,OL,DL');
+        return parentList && parentList.nodeName === listName;
+      };
+    };
+
+    var setupCommands = function (editor) {
+      editor.on('BeforeExecCommand', function (e) {
+        var cmd = e.command.toLowerCase(), isHandled;
+
+        if (cmd === "indent") {
+          if (Indent.indentSelection(editor)) {
+            isHandled = true;
+          }
+        } else if (cmd === "outdent") {
+          if (Outdent.outdentSelection(editor)) {
+            isHandled = true;
+          }
+        }
+
+        if (isHandled) {
+          editor.fire('ExecCommand', { command: e.command });
+          e.preventDefault();
+          return true;
+        }
+      });
+
+      editor.addCommand('InsertUnorderedList', function (ui, detail) {
+        ToggleList.toggleList(editor, 'UL', detail);
+      });
+
+      editor.addCommand('InsertOrderedList', function (ui, detail) {
+        ToggleList.toggleList(editor, 'OL', detail);
+      });
+
+      editor.addCommand('InsertDefinitionList', function (ui, detail) {
+        ToggleList.toggleList(editor, 'DL', detail);
+      });
+    };
+
+    var setupStateHandlers = function (editor) {
+      editor.addQueryStateHandler('InsertUnorderedList', queryListCommandState(editor, 'UL'));
+      editor.addQueryStateHandler('InsertOrderedList', queryListCommandState(editor, 'OL'));
+      editor.addQueryStateHandler('InsertDefinitionList', queryListCommandState(editor, 'DL'));
+    };
+
+    var setupTabKey = function (editor) {
+      editor.on('keydown', function (e) {
+        // Check for tab but not ctrl/cmd+tab since it switches browser tabs
+        if (e.keyCode !== 9 || VK.metaKeyPressed(e)) {
+          return;
+        }
+
+        if (editor.dom.getParent(editor.selection.getStart(), 'LI,DT,DD')) {
+          e.preventDefault();
+
+          if (e.shiftKey) {
+            Outdent.outdentSelection(editor);
+          } else {
+            Indent.indentSelection(editor);
+          }
+        }
+      });
+    };
+
+    var setupUi = function (editor) {
+      var listState = function (listName) {
+        return function () {
+          var self = this;
+
+          editor.on('NodeChange', function (e) {
+            var lists = Tools.grep(e.parents, NodeType.isListNode);
+            self.active(lists.length > 0 && lists[0].nodeName === listName);
+          });
+        };
+      };
+
+      var hasPlugin = function (editor, plugin) {
+        var plugins = editor.settings.plugins ? editor.settings.plugins : '';
+        return Tools.inArray(plugins.split(/[ ,]/), plugin) !== -1;
+      };
+
+      if (!hasPlugin(editor, 'advlist')) {
+        editor.addButton('numlist', {
+          title: 'Numbered list',
+          cmd: 'InsertOrderedList',
+          onPostRender: listState('OL')
+        });
+
+        editor.addButton('bullist', {
+          title: 'Bullet list',
+          cmd: 'InsertUnorderedList',
+          onPostRender: listState('UL')
+        });
+      }
+
+      editor.addButton('indent', {
+        icon: 'indent',
+        title: 'Increase indent',
+        cmd: 'Indent',
+        onPostRender: function (e) {
+          var ctrl = e.control;
+
+          editor.on('nodechange', function () {
+            var listItemBlocks = Selection.getSelectedListItems(editor);
+            var disable = listItemBlocks.length > 0 && NodeType.isFirstChild(listItemBlocks[0]);
+            ctrl.disabled(disable);
+          });
+        }
+      });
+    };
+
+    PluginManager.add('lists', function (editor) {
+      setupUi(editor);
+      Delete.setup(editor);
+
+      editor.on('init', function () {
+        setupCommands(editor);
+        setupStateHandlers(editor);
+        if (editor.getParam('lists_indent_on_tab', true)) {
+          setupTabKey(editor);
+        }
+      });
+
+      return {
+        backspaceDelete: function (isForward) {
+          Delete.backspaceDelete(editor, isForward);
+        }
+      };
+    });
+
+    return function () { };
+  }
+);
+
+
+dem('tinymce.plugins.lists.Plugin')();
+})();
+(function () {
+
+var defs = {}; // id -> {dependencies, definition, instance (possibly undefined)}
+
+// Used when there is no 'main' module.
+// The name is probably (hopefully) unique so minification removes for releases.
+var register_3795 = function (id) {
+  var module = dem(id);
+  var fragments = id.split('.');
+  var target = Function('return this;')();
+  for (var i = 0; i < fragments.length - 1; ++i) {
+    if (target[fragments[i]] === undefined)
+      target[fragments[i]] = {};
+    target = target[fragments[i]];
+  }
+  target[fragments[fragments.length - 1]] = module;
+};
+
+var instantiate = function (id) {
+  var actual = defs[id];
+  var dependencies = actual.deps;
+  var definition = actual.defn;
+  var len = dependencies.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances[i] = dem(dependencies[i]);
+  var defResult = definition.apply(null, instances);
+  if (defResult === undefined)
+     throw 'module [' + id + '] returned undefined';
+  actual.instance = defResult;
+};
+
+var def = function (id, dependencies, definition) {
+  if (typeof id !== 'string')
+    throw 'module id must be a string';
+  else if (dependencies === undefined)
+    throw 'no dependencies for ' + id;
+  else if (definition === undefined)
+    throw 'no definition function for ' + id;
+  defs[id] = {
+    deps: dependencies,
+    defn: definition,
+    instance: undefined
+  };
+};
+
+var dem = function (id) {
+  var actual = defs[id];
+  if (actual === undefined)
+    throw 'module [' + id + '] was undefined';
+  else if (actual.instance === undefined)
+    instantiate(id);
+  return actual.instance;
+};
+
+var req = function (ids, callback) {
+  var len = ids.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances.push(dem(ids[i]));
+  callback.apply(null, callback);
+};
+
+var ephox = {};
+
+ephox.bolt = {
+  module: {
+    api: {
+      define: def,
+      require: req,
+      demand: dem
+    }
+  }
+};
+
+var define = def;
+var require = req;
+var demand = dem;
+// this helps with minificiation when using a lot of global references
+var defineGlobal = function (id, ref) {
+  define(id, [], function () { return ref; });
+};
+/*jsc
+["tinymce.plugins.image.Plugin","tinymce.core.PluginManager","tinymce.core.util.Tools","tinymce.plugins.image.ui.Dialog","global!tinymce.util.Tools.resolve","tinymce.core.Env","tinymce.core.util.JSON","tinymce.core.util.XHR","tinymce.core.ui.Throbber","tinymce.plugins.image.core.Uploader","tinymce.plugins.image.core.Utils","global!Math","global!RegExp","global!document","tinymce.core.util.Promise"]
+jsc*/
+defineGlobal("global!tinymce.util.Tools.resolve", tinymce.util.Tools.resolve);
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.PluginManager',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.PluginManager');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.util.Tools',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.util.Tools');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.Env',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.Env');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.util.JSON',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.util.JSON');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.util.XHR',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.util.XHR');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.ui.Throbber',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.ui.Throbber');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.util.Promise',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.util.Promise');
+  }
+);
+
+defineGlobal("global!document", document);
+/**
+ * Uploader.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+/**
+ * This is basically cut down version of tinymce.core.file.Uploader, which we could use directly
+ * if it wasn't marked as private.
+ *
+ * @class tinymce.image.core.Uploader
+ * @private
+ */
+define(
+  'tinymce.plugins.image.core.Uploader',
+  [
+    'tinymce.core.util.Promise',
+    'tinymce.core.util.Tools',
+    'global!document'
+  ],
+  function (Promise, Tools, document) {
+    return function (settings) {
+      var noop = function () {};
+
+      function pathJoin(path1, path2) {
+        if (path1) {
+          return path1.replace(/\/$/, '') + '/' + path2.replace(/^\//, '');
+        }
+
+        return path2;
+      }
+
+      function defaultHandler(blobInfo, success, failure, progress) {
+        var xhr, formData;
+
+        xhr = new XMLHttpRequest();
+        xhr.open('POST', settings.url);
+        xhr.withCredentials = settings.credentials;
+
+        xhr.upload.onprogress = function (e) {
+          progress(e.loaded / e.total * 100);
+        };
+
+        xhr.onerror = function () {
+          failure("Image upload failed due to a XHR Transport error. Code: " + xhr.status);
+        };
+
+        xhr.onload = function () {
+          var json;
+
+          if (xhr.status < 200 || xhr.status >= 300) {
+            failure("HTTP Error: " + xhr.status);
+            return;
+          }
+
+          json = JSON.parse(xhr.responseText);
+
+          if (!json || typeof json.location != "string") {
+            failure("Invalid JSON: " + xhr.responseText);
+            return;
+          }
+
+          success(pathJoin(settings.basePath, json.location));
+        };
+
+        formData = new FormData();
+        formData.append('file', blobInfo.blob(), blobInfo.filename());
+
+        xhr.send(formData);
+      }
+
+      function uploadBlob(blobInfo, handler) {
+        return new Promise(function (resolve, reject) {
+          try {
+            handler(blobInfo, resolve, reject, noop);
+          } catch (ex) {
+            reject(ex.message);
+          }
+        });
+      }
+
+      function isDefaultHandler(handler) {
+        return handler === defaultHandler;
+      }
+
+      function upload(blobInfo) {
+        return (!settings.url && isDefaultHandler(settings.handler)) ? Promise.reject("Upload url missng from the settings.") : uploadBlob(blobInfo, settings.handler);
+      }
+
+      settings = Tools.extend({
+        credentials: false,
+        handler: defaultHandler
+      }, settings);
+
+      return {
+        upload: upload
+      };
+    };
+  }
+);
+defineGlobal("global!Math", Math);
+/**
+ * Utils.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+/**
+ * @class tinymce.image.core.Utils
+ * @private
+ */
+define(
+  'tinymce.plugins.image.core.Utils',
+  [
+    'tinymce.core.util.Tools',
+    'global!Math',
+    'global!document'
+  ],
+  function (Tools, Math, document) {
+
+    var getImageSize = function (url, callback) {
+      var img = document.createElement('img');
+
+      function done(width, height) {
+        if (img.parentNode) {
+          img.parentNode.removeChild(img);
+        }
+
+        callback({ width: width, height: height });
+      }
+
+      img.onload = function () {
+        done(Math.max(img.width, img.clientWidth), Math.max(img.height, img.clientHeight));
+      };
+
+      img.onerror = function () {
+        done();
+      };
+
+      var style = img.style;
+      style.visibility = 'hidden';
+      style.position = 'fixed';
+      style.bottom = style.left = 0;
+      style.width = style.height = 'auto';
+
+      document.body.appendChild(img);
+      img.src = url;
+    };
+
+
+    var buildListItems = function (inputList, itemCallback, startItems) {
+      function appendItems(values, output) {
+        output = output || [];
+
+        Tools.each(values, function (item) {
+          var menuItem = { text: item.text || item.title };
+
+          if (item.menu) {
+            menuItem.menu = appendItems(item.menu);
+          } else {
+            menuItem.value = item.value;
+            itemCallback(menuItem);
+          }
+
+          output.push(menuItem);
+        });
+
+        return output;
+      }
+
+      return appendItems(inputList, startItems || []);
+    };
+
+    var removePixelSuffix = function (value) {
+      if (value) {
+        value = value.replace(/px$/, '');
+      }
+      return value;
+    };
+
+    var addPixelSuffix = function (value) {
+      if (value.length > 0 && /^[0-9]+$/.test(value)) {
+        value += 'px';
+      }
+      return value;
+    };
+
+    var mergeMargins = function (css) {
+      if (css.margin) {
+
+        var splitMargin = css.margin.split(" ");
+
+        switch (splitMargin.length) {
+          case 1: //margin: toprightbottomleft;
+            css['margin-top'] = css['margin-top'] || splitMargin[0];
+            css['margin-right'] = css['margin-right'] || splitMargin[0];
+            css['margin-bottom'] = css['margin-bottom'] || splitMargin[0];
+            css['margin-left'] = css['margin-left'] || splitMargin[0];
+            break;
+          case 2: //margin: topbottom rightleft;
+            css['margin-top'] = css['margin-top'] || splitMargin[0];
+            css['margin-right'] = css['margin-right'] || splitMargin[1];
+            css['margin-bottom'] = css['margin-bottom'] || splitMargin[0];
+            css['margin-left'] = css['margin-left'] || splitMargin[1];
+            break;
+          case 3: //margin: top rightleft bottom;
+            css['margin-top'] = css['margin-top'] || splitMargin[0];
+            css['margin-right'] = css['margin-right'] || splitMargin[1];
+            css['margin-bottom'] = css['margin-bottom'] || splitMargin[2];
+            css['margin-left'] = css['margin-left'] || splitMargin[1];
+            break;
+          case 4: //margin: top right bottom left;
+            css['margin-top'] = css['margin-top'] || splitMargin[0];
+            css['margin-right'] = css['margin-right'] || splitMargin[1];
+            css['margin-bottom'] = css['margin-bottom'] || splitMargin[2];
+            css['margin-left'] = css['margin-left'] || splitMargin[3];
+        }
+        delete css.margin;
+      }
+      return css;
+    };
+
+    return {
+      getImageSize: getImageSize,
+      buildListItems: buildListItems,
+      removePixelSuffix: removePixelSuffix,
+      addPixelSuffix: addPixelSuffix,
+      mergeMargins: mergeMargins
+    };
+  }
+);
+
+defineGlobal("global!RegExp", RegExp);
+/**
+ * Dialog.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+/**
+ * @class tinymce.image.ui.Dialog
+ * @private
+ */
+define(
+  'tinymce.plugins.image.ui.Dialog',
+  [
+    'tinymce.core.Env',
+    'tinymce.core.util.JSON',
+    'tinymce.core.util.Tools',
+    'tinymce.core.util.XHR',
+    'tinymce.core.ui.Throbber',
+    'tinymce.plugins.image.core.Uploader',
+    'tinymce.plugins.image.core.Utils',
+    'global!Math',
+    'global!RegExp',
+    'global!document'
+  ],
+  function (Env, JSON, Tools, XHR, Throbber, Uploader, Utils, Math, RegExp, document) {
+
+    return function (editor) {
+      function createImageList(callback) {
+        var imageList = editor.settings.image_list;
+
+        if (typeof imageList == "string") {
+          XHR.send({
+            url: imageList,
+            success: function (text) {
+              callback(JSON.parse(text));
+            }
+          });
+        } else if (typeof imageList == "function") {
+          imageList(callback);
+        } else {
+          callback(imageList);
+        }
+      }
+
+      function showDialog(imageList) {
+        var win, data = {}, imgElm, figureElm, dom = editor.dom, settings = editor.settings;
+        var width, height, imageListCtrl, classListCtrl, imageDimensions = settings.image_dimensions !== false;
+
+
+        function onFileInput() {
+          var throbber = new Throbber(win.getEl());
+          var file = this.value();
+
+          var uploader = new Uploader({
+            url: settings.images_upload_url,
+            basePath: settings.images_upload_base_path,
+            credentials: settings.images_upload_credentials,
+            handler: settings.images_upload_handler
+          });
+
+          // we do not need to add this to editors blobCache, so we fake bare minimum
+          var blobInfo = editor.editorUpload.blobCache.create({
+            blob: file,
+            name: file.name ? file.name.replace(/\.[^\.]+$/, '') : null, // strip extension
+            base64: 'data:image/fake;base64,=' // without this create() will throw exception
+          });
+
+          var finalize = function () {
+            throbber.hide();
+            URL.revokeObjectURL(blobInfo.blobUri()); // in theory we could fake blobUri too, but until it's legitimate, we have too revoke it manually
+          };
+
+          throbber.show();
+
+          return uploader.upload(blobInfo).then(function (url) {
+            var src = win.find('#src');
+            src.value(url);
+            win.find('tabpanel')[0].activateTab(0); // switch to General tab
+            src.fire('change'); // this will invoke onSrcChange (and any other handlers, if any).
+            finalize();
+            return url;
+          }, function (err) {
+            editor.windowManager.alert(err);
+            finalize();
+          });
+        }
+
+        function isTextBlock(node) {
+          return editor.schema.getTextBlockElements()[node.nodeName];
+        }
+
+        function recalcSize() {
+          var widthCtrl, heightCtrl, newWidth, newHeight;
+
+          widthCtrl = win.find('#width')[0];
+          heightCtrl = win.find('#height')[0];
+
+          if (!widthCtrl || !heightCtrl) {
+            return;
+          }
+
+          newWidth = widthCtrl.value();
+          newHeight = heightCtrl.value();
+
+          if (win.find('#constrain')[0].checked() && width && height && newWidth && newHeight) {
+            if (width != newWidth) {
+              newHeight = Math.round((newWidth / width) * newHeight);
+
+              if (!isNaN(newHeight)) {
+                heightCtrl.value(newHeight);
+              }
+            } else {
+              newWidth = Math.round((newHeight / height) * newWidth);
+
+              if (!isNaN(newWidth)) {
+                widthCtrl.value(newWidth);
+              }
+            }
+          }
+
+          width = newWidth;
+          height = newHeight;
+        }
+
+        function updateStyle() {
+          if (!editor.settings.image_advtab) {
+            return;
+          }
+
+          var data = win.toJSON(),
+            css = dom.parseStyle(data.style);
+
+          css = Utils.mergeMargins(css);
+
+          if (data.vspace) {
+            css['margin-top'] = css['margin-bottom'] = Utils.addPixelSuffix(data.vspace);
+          }
+          if (data.hspace) {
+            css['margin-left'] = css['margin-right'] = Utils.addPixelSuffix(data.hspace);
+          }
+          if (data.border) {
+            css['border-width'] = Utils.addPixelSuffix(data.border);
+          }
+
+          win.find('#style').value(dom.serializeStyle(dom.parseStyle(dom.serializeStyle(css))));
+        }
+
+        function updateVSpaceHSpaceBorder() {
+          if (!editor.settings.image_advtab) {
+            return;
+          }
+
+          var data = win.toJSON(),
+            css = dom.parseStyle(data.style);
+
+          win.find('#vspace').value("");
+          win.find('#hspace').value("");
+
+          css = Utils.mergeMargins(css);
+
+          //Move opposite equal margins to vspace/hspace field
+          if ((css['margin-top'] && css['margin-bottom']) || (css['margin-right'] && css['margin-left'])) {
+            if (css['margin-top'] === css['margin-bottom']) {
+              win.find('#vspace').value(Utils.removePixelSuffix(css['margin-top']));
+            } else {
+              win.find('#vspace').value('');
+            }
+            if (css['margin-right'] === css['margin-left']) {
+              win.find('#hspace').value(Utils.removePixelSuffix(css['margin-right']));
+            } else {
+              win.find('#hspace').value('');
+            }
+          }
+
+          //Move border-width
+          if (css['border-width']) {
+            win.find('#border').value(Utils.removePixelSuffix(css['border-width']));
+          }
+
+          win.find('#style').value(dom.serializeStyle(dom.parseStyle(dom.serializeStyle(css))));
+        }
+
+        function waitLoad(imgElm) {
+          function selectImage() {
+            imgElm.onload = imgElm.onerror = null;
+
+            if (editor.selection) {
+              editor.selection.select(imgElm);
+              editor.nodeChanged();
+            }
+          }
+
+          imgElm.onload = function () {
+            if (!data.width && !data.height && imageDimensions) {
+              dom.setAttribs(imgElm, {
+                width: imgElm.clientWidth,
+                height: imgElm.clientHeight
+              });
+            }
+
+            selectImage();
+          };
+
+          imgElm.onerror = selectImage;
+        }
+
+        function onSubmitForm() {
+          var figureElm, oldImg;
+
+          updateStyle();
+          recalcSize();
+
+          data = Tools.extend(data, win.toJSON());
+
+          if (!data.alt) {
+            data.alt = '';
+          }
+
+          if (!data.title) {
+            data.title = '';
+          }
+
+          if (data.width === '') {
+            data.width = null;
+          }
+
+          if (data.height === '') {
+            data.height = null;
+          }
+
+          if (!data.style) {
+            data.style = null;
+          }
+
+          // Setup new data excluding style properties
+          /*eslint dot-notation: 0*/
+          data = {
+            src: data.src,
+            alt: data.alt,
+            title: data.title,
+            width: data.width,
+            height: data.height,
+            style: data.style,
+            caption: data.caption,
+            "class": data["class"]
+          };
+
+          editor.undoManager.transact(function () {
+            if (!data.src) {
+              if (imgElm) {
+                dom.remove(imgElm);
+                editor.focus();
+                editor.nodeChanged();
+              }
+
+              return;
+            }
+
+            if (data.title === "") {
+              data.title = null;
+            }
+
+            if (!imgElm) {
+              data.id = '__mcenew';
+              editor.focus();
+              editor.selection.setContent(dom.createHTML('img', data));
+              imgElm = dom.get('__mcenew');
+              dom.setAttrib(imgElm, 'id', null);
+            } else {
+              dom.setAttribs(imgElm, data);
+            }
+
+            editor.editorUpload.uploadImagesAuto();
+
+            if (data.caption === false) {
+              if (dom.is(imgElm.parentNode, 'figure.image')) {
+                figureElm = imgElm.parentNode;
+                dom.insertAfter(imgElm, figureElm);
+                dom.remove(figureElm);
+              }
+            }
+
+            if (data.caption === true) {
+              if (!dom.is(imgElm.parentNode, 'figure.image')) {
+                oldImg = imgElm;
+                imgElm = imgElm.cloneNode(true);
+                figureElm = dom.create('figure', { 'class': 'image' });
+                figureElm.appendChild(imgElm);
+                figureElm.appendChild(dom.create('figcaption', { contentEditable: true }, 'Caption'));
+                figureElm.contentEditable = false;
+
+                var textBlock = dom.getParent(oldImg, isTextBlock);
+                if (textBlock) {
+                  dom.split(textBlock, oldImg, figureElm);
+                } else {
+                  dom.replace(figureElm, oldImg);
+                }
+
+                editor.selection.select(figureElm);
+              }
+
+              return;
+            }
+
+            waitLoad(imgElm);
+          });
+        }
+
+        function onSrcChange(e) {
+          var srcURL, prependURL, absoluteURLPattern, meta = e.meta || {};
+
+          if (imageListCtrl) {
+            imageListCtrl.value(editor.convertURL(this.value(), 'src'));
+          }
+
+          Tools.each(meta, function (value, key) {
+            win.find('#' + key).value(value);
+          });
+
+          if (!meta.width && !meta.height) {
+            srcURL = editor.convertURL(this.value(), 'src');
+
+            // Pattern test the src url and make sure we haven't already prepended the url
+            prependURL = editor.settings.image_prepend_url;
+            absoluteURLPattern = new RegExp('^(?:[a-z]+:)?//', 'i');
+            if (prependURL && !absoluteURLPattern.test(srcURL) && srcURL.substring(0, prependURL.length) !== prependURL) {
+              srcURL = prependURL + srcURL;
+            }
+
+            this.value(srcURL);
+
+            Utils.getImageSize(editor.documentBaseURI.toAbsolute(this.value()), function (data) {
+              if (data.width && data.height && imageDimensions) {
+                width = data.width;
+                height = data.height;
+
+                win.find('#width').value(width);
+                win.find('#height').value(height);
+              }
+            });
+          }
+        }
+
+        function onBeforeCall(e) {
+          e.meta = win.toJSON();
+        }
+
+        imgElm = editor.selection.getNode();
+        figureElm = dom.getParent(imgElm, 'figure.image');
+        if (figureElm) {
+          imgElm = dom.select('img', figureElm)[0];
+        }
+
+        if (imgElm &&
+          (imgElm.nodeName != 'IMG' ||
+            imgElm.getAttribute('data-mce-object') ||
+            imgElm.getAttribute('data-mce-placeholder'))) {
+          imgElm = null;
+        }
+
+        if (imgElm) {
+          width = dom.getAttrib(imgElm, 'width');
+          height = dom.getAttrib(imgElm, 'height');
+
+          data = {
+            src: dom.getAttrib(imgElm, 'src'),
+            alt: dom.getAttrib(imgElm, 'alt'),
+            title: dom.getAttrib(imgElm, 'title'),
+            "class": dom.getAttrib(imgElm, 'class'),
+            width: width,
+            height: height,
+            caption: !!figureElm
+          };
+        }
+
+        if (imageList) {
+          imageListCtrl = {
+            type: 'listbox',
+            label: 'Image list',
+            values: Utils.buildListItems(
+              imageList,
+              function (item) {
+                item.value = editor.convertURL(item.value || item.url, 'src');
+              },
+              [{ text: 'None', value: '' }]
+            ),
+            value: data.src && editor.convertURL(data.src, 'src'),
+            onselect: function (e) {
+              var altCtrl = win.find('#alt');
+
+              if (!altCtrl.value() || (e.lastControl && altCtrl.value() == e.lastControl.text())) {
+                altCtrl.value(e.control.text());
+              }
+
+              win.find('#src').value(e.control.value()).fire('change');
+            },
+            onPostRender: function () {
+              /*eslint consistent-this: 0*/
+              imageListCtrl = this;
+            }
+          };
+        }
+
+        if (editor.settings.image_class_list) {
+          classListCtrl = {
+            name: 'class',
+            type: 'listbox',
+            label: 'Class',
+            values: Utils.buildListItems(
+              editor.settings.image_class_list,
+              function (item) {
+                if (item.value) {
+                  item.textStyle = function () {
+                    return editor.formatter.getCssText({ inline: 'img', classes: [item.value] });
+                  };
+                }
+              }
+            )
+          };
+        }
+
+        // General settings shared between simple and advanced dialogs
+        var generalFormItems = [
+          {
+            name: 'src',
+            type: 'filepicker',
+            filetype: 'image',
+            label: 'Source',
+            autofocus: true,
+            onchange: onSrcChange,
+            onbeforecall: onBeforeCall
+          },
+          imageListCtrl
+        ];
+
+        if (editor.settings.image_description !== false) {
+          generalFormItems.push({ name: 'alt', type: 'textbox', label: 'Image description' });
+        }
+
+        if (editor.settings.image_title) {
+          generalFormItems.push({ name: 'title', type: 'textbox', label: 'Image Title' });
+        }
+
+        if (imageDimensions) {
+          generalFormItems.push({
+            type: 'container',
+            label: 'Dimensions',
+            layout: 'flex',
+            direction: 'row',
+            align: 'center',
+            spacing: 5,
+            items: [
+              { name: 'width', type: 'textbox', maxLength: 5, size: 3, onchange: recalcSize, ariaLabel: 'Width' },
+              { type: 'label', text: 'x' },
+              { name: 'height', type: 'textbox', maxLength: 5, size: 3, onchange: recalcSize, ariaLabel: 'Height' },
+              { name: 'constrain', type: 'checkbox', checked: true, text: 'Constrain proportions' }
+            ]
+          });
+        }
+
+        generalFormItems.push(classListCtrl);
+
+        if (editor.settings.image_caption && Env.ceFalse) {
+          generalFormItems.push({ name: 'caption', type: 'checkbox', label: 'Caption' });
+        }
+
+        if (editor.settings.image_advtab || editor.settings.images_upload_url) {
+          var body = [
+            {
+              title: 'General',
+              type: 'form',
+              items: generalFormItems
+            }
+          ];
+
+          if (editor.settings.image_advtab) {
+            // Parse styles from img
+            if (imgElm) {
+              if (imgElm.style.marginLeft && imgElm.style.marginRight && imgElm.style.marginLeft === imgElm.style.marginRight) {
+                data.hspace = Utils.removePixelSuffix(imgElm.style.marginLeft);
+              }
+              if (imgElm.style.marginTop && imgElm.style.marginBottom && imgElm.style.marginTop === imgElm.style.marginBottom) {
+                data.vspace = Utils.removePixelSuffix(imgElm.style.marginTop);
+              }
+              if (imgElm.style.borderWidth) {
+                data.border = Utils.removePixelSuffix(imgElm.style.borderWidth);
+              }
+
+              data.style = editor.dom.serializeStyle(editor.dom.parseStyle(editor.dom.getAttrib(imgElm, 'style')));
+            }
+
+            body.push({
+              title: 'Advanced',
+              type: 'form',
+              pack: 'start',
+              items: [
+                {
+                  label: 'Style',
+                  name: 'style',
+                  type: 'textbox',
+                  onchange: updateVSpaceHSpaceBorder
+                },
+                {
+                  type: 'form',
+                  layout: 'grid',
+                  packV: 'start',
+                  columns: 2,
+                  padding: 0,
+                  alignH: ['left', 'right'],
+                  defaults: {
+                    type: 'textbox',
+                    maxWidth: 50,
+                    onchange: updateStyle
+                  },
+                  items: [
+                    { label: 'Vertical space', name: 'vspace' },
+                    { label: 'Horizontal space', name: 'hspace' },
+                    { label: 'Border', name: 'border' }
+                  ]
+                }
+              ]
+            });
+          }
+
+          if (editor.settings.images_upload_url) {
+            var acceptExts = '.jpg,.jpeg,.png,.gif';
+
+            var uploadTab = {
+              title: 'Upload',
+              type: 'form',
+              layout: 'flex',
+              direction: 'column',
+              align: 'stretch',
+              padding: '20 20 20 20',
+              items: [
+                {
+                  type: 'container',
+                  layout: 'flex',
+                  direction: 'column',
+                  align: 'center',
+                  spacing: 10,
+                  items: [
+                    {
+                      text: "Browse for an image",
+                      type: 'browsebutton',
+                      accept: acceptExts,
+                      onchange: onFileInput
+                    },
+                    {
+                      text: 'OR',
+                      type: 'label'
+                    }
+                  ]
+                },
+                {
+                  text: "Drop an image here",
+                  type: 'dropzone',
+                  accept: acceptExts,
+                  height: 100,
+                  onchange: onFileInput
+                }
+              ]
+            };
+
+            body.push(uploadTab);
+          }
+
+          // Advanced dialog shows general+advanced tabs
+          win = editor.windowManager.open({
+            title: 'Insert/edit image',
+            data: data,
+            bodyType: 'tabpanel',
+            body: body,
+            onSubmit: onSubmitForm
+          });
+        } else {
+          // Simple default dialog
+          win = editor.windowManager.open({
+            title: 'Insert/edit image',
+            data: data,
+            body: generalFormItems,
+            onSubmit: onSubmitForm
+          });
+        }
+      }
+
+      function open() {
+        createImageList(showDialog);
+      }
+
+      return {
+        open: open
+      };
+    };
+  }
+);
+
+/**
+ * Plugin.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+/**
+ * This class contains all core logic for the image plugin.
+ *
+ * @class tinymce.image.Plugin
+ * @private
+ */
+define(
+  'tinymce.plugins.image.Plugin',
+  [
+    'tinymce.core.PluginManager',
+    'tinymce.core.util.Tools',
+    'tinymce.plugins.image.ui.Dialog'
+  ],
+  function (PluginManager, Tools, Dialog) {
+    PluginManager.add('image', function (editor) {
+
+      editor.on('preInit', function () {
+        function hasImageClass(node) {
+          var className = node.attr('class');
+          return className && /\bimage\b/.test(className);
+        }
+
+        function toggleContentEditableState(state) {
+          return function (nodes) {
+            var i = nodes.length, node;
+
+            function toggleContentEditable(node) {
+              node.attr('contenteditable', state ? 'true' : null);
+            }
+
+            while (i--) {
+              node = nodes[i];
+
+              if (hasImageClass(node)) {
+                node.attr('contenteditable', state ? 'false' : null);
+                Tools.each(node.getAll('figcaption'), toggleContentEditable);
+              }
+            }
+          };
+        }
+
+        editor.parser.addNodeFilter('figure', toggleContentEditableState(true));
+        editor.serializer.addNodeFilter('figure', toggleContentEditableState(false));
+      });
+
+      editor.addButton('image', {
+        icon: 'image',
+        tooltip: 'Insert/edit image',
+        onclick: Dialog(editor).open,
+        stateSelector: 'img:not([data-mce-object],[data-mce-placeholder]),figure.image'
+      });
+
+      editor.addMenuItem('image', {
+        icon: 'image',
+        text: 'Image',
+        onclick: Dialog(editor).open,
+        context: 'insert',
+        prependToContext: true
+      });
+
+      editor.addCommand('mceImage', Dialog(editor).open);
+    });
+
+    return function () { };
+  }
+);
+dem('tinymce.plugins.image.Plugin')();
+})();
+(function () {
+
+var defs = {}; // id -> {dependencies, definition, instance (possibly undefined)}
+
+// Used when there is no 'main' module.
+// The name is probably (hopefully) unique so minification removes for releases.
+var register_3795 = function (id) {
+  var module = dem(id);
+  var fragments = id.split('.');
+  var target = Function('return this;')();
+  for (var i = 0; i < fragments.length - 1; ++i) {
+    if (target[fragments[i]] === undefined)
+      target[fragments[i]] = {};
+    target = target[fragments[i]];
+  }
+  target[fragments[fragments.length - 1]] = module;
+};
+
+var instantiate = function (id) {
+  var actual = defs[id];
+  var dependencies = actual.deps;
+  var definition = actual.defn;
+  var len = dependencies.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances[i] = dem(dependencies[i]);
+  var defResult = definition.apply(null, instances);
+  if (defResult === undefined)
+     throw 'module [' + id + '] returned undefined';
+  actual.instance = defResult;
+};
+
+var def = function (id, dependencies, definition) {
+  if (typeof id !== 'string')
+    throw 'module id must be a string';
+  else if (dependencies === undefined)
+    throw 'no dependencies for ' + id;
+  else if (definition === undefined)
+    throw 'no definition function for ' + id;
+  defs[id] = {
+    deps: dependencies,
+    defn: definition,
+    instance: undefined
+  };
+};
+
+var dem = function (id) {
+  var actual = defs[id];
+  if (actual === undefined)
+    throw 'module [' + id + '] was undefined';
+  else if (actual.instance === undefined)
+    instantiate(id);
+  return actual.instance;
+};
+
+var req = function (ids, callback) {
+  var len = ids.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances.push(dem(ids[i]));
+  callback.apply(null, callback);
+};
+
+var ephox = {};
+
+ephox.bolt = {
+  module: {
+    api: {
+      define: def,
+      require: req,
+      demand: dem
+    }
+  }
+};
+
+var define = def;
+var require = req;
+var demand = dem;
+// this helps with minificiation when using a lot of global references
+var defineGlobal = function (id, ref) {
+  define(id, [], function () { return ref; });
+};
+/*jsc
+["tinymce.plugins.nonbreaking.Plugin","tinymce.core.PluginManager","global!tinymce.util.Tools.resolve"]
+jsc*/
+defineGlobal("global!tinymce.util.Tools.resolve", tinymce.util.Tools.resolve);
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.PluginManager',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.PluginManager');
+  }
+);
+
+/**
+ * Plugin.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+/**
+ * This class contains all core logic for the nonbreaking plugin.
+ *
+ * @class tinymce.nonbreaking.Plugin
+ * @private
+ */
+define(
+  'tinymce.plugins.nonbreaking.Plugin',
+  [
+    'tinymce.core.PluginManager'
+  ],
+  function (PluginManager) {
+    PluginManager.add('nonbreaking', function (editor) {
+      var setting = editor.getParam('nonbreaking_force_tab');
+      var stringRepeat = function (string, repeats) {
+        var str = '';
+        for (var index = 0; index < repeats; index++) {
+          str += string;
+        }
+        return str;
+      };
+
+      var insertNbsp = function (times) {
+        var nbsp = (editor.plugins.visualchars && editor.plugins.visualchars.state) ? '<span class="mce-nbsp">&nbsp;</span>' : '&nbsp;';
+
+        editor.insertContent(stringRepeat(nbsp, times));
+        editor.dom.setAttrib(editor.dom.select('span.mce-nbsp'), 'data-mce-bogus', '1');
+      };
+
+      editor.addCommand('mceNonBreaking', function () {
+        insertNbsp(1);
+      });
+
+      editor.addButton('nonbreaking', {
+        title: 'Nonbreaking space',
+        cmd: 'mceNonBreaking'
+      });
+
+      editor.addMenuItem('nonbreaking', {
+        text: 'Nonbreaking space',
+        cmd: 'mceNonBreaking',
+        context: 'insert'
+      });
+
+      if (setting) {
+        var spaces = +setting > 1 ? +setting : 3;  // defaults to 3 spaces if setting is true (or 1)
+
+        editor.on('keydown', function (e) {
+          if (e.keyCode == 9) {
+
+            if (e.shiftKey) {
+              return;
+            }
+
+            e.preventDefault();
+            insertNbsp(spaces);
+          }
+        });
+      }
+    });
+
+    return function () { };
+  }
+);
+dem('tinymce.plugins.nonbreaking.Plugin')();
+})();
+(function () {
+
+var defs = {}; // id -> {dependencies, definition, instance (possibly undefined)}
+
+// Used when there is no 'main' module.
+// The name is probably (hopefully) unique so minification removes for releases.
+var register_3795 = function (id) {
+  var module = dem(id);
+  var fragments = id.split('.');
+  var target = Function('return this;')();
+  for (var i = 0; i < fragments.length - 1; ++i) {
+    if (target[fragments[i]] === undefined)
+      target[fragments[i]] = {};
+    target = target[fragments[i]];
+  }
+  target[fragments[fragments.length - 1]] = module;
+};
+
+var instantiate = function (id) {
+  var actual = defs[id];
+  var dependencies = actual.deps;
+  var definition = actual.defn;
+  var len = dependencies.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances[i] = dem(dependencies[i]);
+  var defResult = definition.apply(null, instances);
+  if (defResult === undefined)
+     throw 'module [' + id + '] returned undefined';
+  actual.instance = defResult;
+};
+
+var def = function (id, dependencies, definition) {
+  if (typeof id !== 'string')
+    throw 'module id must be a string';
+  else if (dependencies === undefined)
+    throw 'no dependencies for ' + id;
+  else if (definition === undefined)
+    throw 'no definition function for ' + id;
+  defs[id] = {
+    deps: dependencies,
+    defn: definition,
+    instance: undefined
+  };
+};
+
+var dem = function (id) {
+  var actual = defs[id];
+  if (actual === undefined)
+    throw 'module [' + id + '] was undefined';
+  else if (actual.instance === undefined)
+    instantiate(id);
+  return actual.instance;
+};
+
+var req = function (ids, callback) {
+  var len = ids.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances.push(dem(ids[i]));
+  callback.apply(null, callback);
+};
+
+var ephox = {};
+
+ephox.bolt = {
+  module: {
+    api: {
+      define: def,
+      require: req,
+      demand: dem
+    }
+  }
+};
+
+var define = def;
+var require = req;
+var demand = dem;
+// this helps with minificiation when using a lot of global references
+var defineGlobal = function (id, ref) {
+  define(id, [], function () { return ref; });
+};
+/*jsc
+["tinymce.plugins.tabfocus.Plugin","tinymce.core.PluginManager","tinymce.core.dom.DOMUtils","tinymce.core.util.Tools","tinymce.core.EditorManager","tinymce.core.util.Delay","tinymce.core.Env","global!tinymce.util.Tools.resolve"]
+jsc*/
+defineGlobal("global!tinymce.util.Tools.resolve", tinymce.util.Tools.resolve);
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.PluginManager',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.PluginManager');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.dom.DOMUtils',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.dom.DOMUtils');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.util.Tools',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.util.Tools');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.EditorManager',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.EditorManager');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.util.Delay',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.util.Delay');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.Env',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.Env');
+  }
+);
+
+/**
+ * Plugin.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+/**
+ * This class contains all core logic for the code plugin.
+ *
+ * @class tinymce.tabfocus.Plugin
+ * @private
+ */
+define(
+  'tinymce.plugins.tabfocus.Plugin',
+  [
+    'tinymce.core.PluginManager',
+    'tinymce.core.dom.DOMUtils',
+    'tinymce.core.util.Tools',
+    'tinymce.core.EditorManager',
+    'tinymce.core.util.Delay',
+    'tinymce.core.Env'
+  ],
+  function (PluginManager, DOMUtils, Tools, EditorManager, Delay, Env) {
+    PluginManager.add('tabfocus', function (editor) {
+      var DOM = DOMUtils.DOM;
+
+      function tabCancel(e) {
+        if (e.keyCode === 9 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+          e.preventDefault();
+        }
+      }
+
+      function tabHandler(e) {
+        var x, el, v, i;
+
+        if (e.keyCode !== 9 || e.ctrlKey || e.altKey || e.metaKey || e.isDefaultPrevented()) {
+          return;
+        }
+
+        function find(direction) {
+          el = DOM.select(':input:enabled,*[tabindex]:not(iframe)');
+
+          function canSelectRecursive(e) {
+            return e.nodeName === "BODY" || (e.type != 'hidden' &&
+              e.style.display != "none" &&
+              e.style.visibility != "hidden" && canSelectRecursive(e.parentNode));
+          }
+
+          function canSelect(el) {
+            return /INPUT|TEXTAREA|BUTTON/.test(el.tagName) && EditorManager.get(e.id) && el.tabIndex != -1 && canSelectRecursive(el);
+          }
+
+          Tools.each(el, function (e, i) {
+            if (e.id == editor.id) {
+              x = i;
+              return false;
+            }
+          });
+          if (direction > 0) {
+            for (i = x + 1; i < el.length; i++) {
+              if (canSelect(el[i])) {
+                return el[i];
+              }
+            }
+          } else {
+            for (i = x - 1; i >= 0; i--) {
+              if (canSelect(el[i])) {
+                return el[i];
+              }
+            }
+          }
+
+          return null;
+        }
+
+        v = Tools.explode(editor.getParam('tab_focus', editor.getParam('tabfocus_elements', ':prev,:next')));
+
+        if (v.length == 1) {
+          v[1] = v[0];
+          v[0] = ':prev';
+        }
+
+        // Find element to focus
+        if (e.shiftKey) {
+          if (v[0] == ':prev') {
+            el = find(-1);
+          } else {
+            el = DOM.get(v[0]);
+          }
+        } else {
+          if (v[1] == ':next') {
+            el = find(1);
+          } else {
+            el = DOM.get(v[1]);
+          }
+        }
+
+        if (el) {
+          var focusEditor = EditorManager.get(el.id || el.name);
+
+          if (el.id && focusEditor) {
+            focusEditor.focus();
+          } else {
+            Delay.setTimeout(function () {
+              if (!Env.webkit) {
+                window.focus();
+              }
+
+              el.focus();
+            }, 10);
+          }
+
+          e.preventDefault();
+        }
+      }
+
+      editor.on('init', function () {
+        if (editor.inline) {
+          // Remove default tabIndex in inline mode
+          DOM.setAttrib(editor.getBody(), 'tabIndex', null);
+        }
+
+        editor.on('keyup', tabCancel);
+
+        if (Env.gecko) {
+          editor.on('keypress keydown', tabHandler);
+        } else {
+          editor.on('keydown', tabHandler);
+        }
+      });
+    });
+
+
+    return function () { };
+  }
+);
+dem('tinymce.plugins.tabfocus.Plugin')();
+})();
+(function () {
+
+var defs = {}; // id -> {dependencies, definition, instance (possibly undefined)}
+
+// Used when there is no 'main' module.
+// The name is probably (hopefully) unique so minification removes for releases.
+var register_3795 = function (id) {
+  var module = dem(id);
+  var fragments = id.split('.');
+  var target = Function('return this;')();
+  for (var i = 0; i < fragments.length - 1; ++i) {
+    if (target[fragments[i]] === undefined)
+      target[fragments[i]] = {};
+    target = target[fragments[i]];
+  }
+  target[fragments[fragments.length - 1]] = module;
+};
+
+var instantiate = function (id) {
+  var actual = defs[id];
+  var dependencies = actual.deps;
+  var definition = actual.defn;
+  var len = dependencies.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances[i] = dem(dependencies[i]);
+  var defResult = definition.apply(null, instances);
+  if (defResult === undefined)
+     throw 'module [' + id + '] returned undefined';
+  actual.instance = defResult;
+};
+
+var def = function (id, dependencies, definition) {
+  if (typeof id !== 'string')
+    throw 'module id must be a string';
+  else if (dependencies === undefined)
+    throw 'no dependencies for ' + id;
+  else if (definition === undefined)
+    throw 'no definition function for ' + id;
+  defs[id] = {
+    deps: dependencies,
+    defn: definition,
+    instance: undefined
+  };
+};
+
+var dem = function (id) {
+  var actual = defs[id];
+  if (actual === undefined)
+    throw 'module [' + id + '] was undefined';
+  else if (actual.instance === undefined)
+    instantiate(id);
+  return actual.instance;
+};
+
+var req = function (ids, callback) {
+  var len = ids.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances.push(dem(ids[i]));
+  callback.apply(null, callback);
+};
+
+var ephox = {};
+
+ephox.bolt = {
+  module: {
+    api: {
+      define: def,
+      require: req,
+      demand: dem
+    }
+  }
+};
+
+var define = def;
+var require = req;
+var demand = dem;
+// this helps with minificiation when using a lot of global references
+var defineGlobal = function (id, ref) {
+  define(id, [], function () { return ref; });
+};
+/*jsc
+["tinymce.plugins.visualchars.Plugin","tinymce.core.PluginManager","tinymce.core.util.Delay","ephox.katamari.api.Arr","ephox.sugar.api.node.Element","tinymce.plugins.visualchars.core.VisualChars","global!tinymce.util.Tools.resolve","ephox.katamari.api.Option","global!Array","global!Error","global!String","ephox.katamari.api.Fun","global!console","global!document","tinymce.plugins.visualchars.core.Data","tinymce.plugins.visualchars.core.Nodes","ephox.sugar.api.node.Node","global!Object","ephox.sugar.api.node.NodeTypes","tinymce.plugins.visualchars.core.Html"]
+jsc*/
+defineGlobal("global!tinymce.util.Tools.resolve", tinymce.util.Tools.resolve);
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.PluginManager',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.PluginManager');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.util.Delay',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.util.Delay');
+  }
+);
+
+defineGlobal("global!Array", Array);
+defineGlobal("global!Error", Error);
+define(
+  'ephox.katamari.api.Fun',
+
+  [
+    'global!Array',
+    'global!Error'
+  ],
+
+  function (Array, Error) {
+
+    var noop = function () { };
+
+    var compose = function (fa, fb) {
+      return function () {
+        return fa(fb.apply(null, arguments));
+      };
+    };
+
+    var constant = function (value) {
+      return function () {
+        return value;
+      };
+    };
+
+    var identity = function (x) {
+      return x;
+    };
+
+    var tripleEquals = function(a, b) {
+      return a === b;
+    };
+
+    // Don't use array slice(arguments), makes the whole function unoptimisable on Chrome
+    var curry = function (f) {
+      // equivalent to arguments.slice(1)
+      // starting at 1 because 0 is the f, makes things tricky.
+      // Pay attention to what variable is where, and the -1 magic.
+      // thankfully, we have tests for this.
+      var args = new Array(arguments.length - 1);
+      for (var i = 1; i < arguments.length; i++) args[i-1] = arguments[i];
+
+      return function () {
+        var newArgs = new Array(arguments.length);
+        for (var j = 0; j < newArgs.length; j++) newArgs[j] = arguments[j];
+
+        var all = args.concat(newArgs);
+        return f.apply(null, all);
+      };
+    };
+
+    var not = function (f) {
+      return function () {
+        return !f.apply(null, arguments);
+      };
+    };
+
+    var die = function (msg) {
+      return function () {
+        throw new Error(msg);
+      };
+    };
+
+    var apply = function (f) {
+      return f();
+    };
+
+    var call = function(f) {
+      f();
+    };
+
+    var never = constant(false);
+    var always = constant(true);
+    
+
+    return {
+      noop: noop,
+      compose: compose,
+      constant: constant,
+      identity: identity,
+      tripleEquals: tripleEquals,
+      curry: curry,
+      not: not,
+      die: die,
+      apply: apply,
+      call: call,
+      never: never,
+      always: always
+    };
+  }
+);
+
+defineGlobal("global!Object", Object);
+define(
+  'ephox.katamari.api.Option',
+
+  [
+    'ephox.katamari.api.Fun',
+    'global!Object'
+  ],
+
+  function (Fun, Object) {
+
+    var never = Fun.never;
+    var always = Fun.always;
+
+    /**
+      Option objects support the following methods:
+
+      fold :: this Option a -> ((() -> b, a -> b)) -> Option b
+
+      is :: this Option a -> a -> Boolean
+
+      isSome :: this Option a -> () -> Boolean
+
+      isNone :: this Option a -> () -> Boolean
+
+      getOr :: this Option a -> a -> a
+
+      getOrThunk :: this Option a -> (() -> a) -> a
+
+      getOrDie :: this Option a -> String -> a
+
+      or :: this Option a -> Option a -> Option a
+        - if some: return self
+        - if none: return opt
+
+      orThunk :: this Option a -> (() -> Option a) -> Option a
+        - Same as "or", but uses a thunk instead of a value
+
+      map :: this Option a -> (a -> b) -> Option b
+        - "fmap" operation on the Option Functor.
+        - same as 'each'
+
+      ap :: this Option a -> Option (a -> b) -> Option b
+        - "apply" operation on the Option Apply/Applicative.
+        - Equivalent to <*> in Haskell/PureScript.
+
+      each :: this Option a -> (a -> b) -> Option b
+        - same as 'map'
+
+      bind :: this Option a -> (a -> Option b) -> Option b
+        - "bind"/"flatMap" operation on the Option Bind/Monad.
+        - Equivalent to >>= in Haskell/PureScript; flatMap in Scala.
+
+      flatten :: {this Option (Option a))} -> () -> Option a
+        - "flatten"/"join" operation on the Option Monad.
+
+      exists :: this Option a -> (a -> Boolean) -> Boolean
+
+      forall :: this Option a -> (a -> Boolean) -> Boolean
+
+      filter :: this Option a -> (a -> Boolean) -> Option a
+
+      equals :: this Option a -> Option a -> Boolean
+
+      equals_ :: this Option a -> (Option a, a -> Boolean) -> Boolean
+
+      toArray :: this Option a -> () -> [a]
+
+    */
+
+    var none = function () { return NONE; };
+
+    var NONE = (function () {
+      var eq = function (o) {
+        return o.isNone();
+      };
+
+      // inlined from peanut, maybe a micro-optimisation?
+      var call = function (thunk) { return thunk(); };
+      var id = function (n) { return n; };
+      var noop = function () { };
+
+      var me = {
+        fold: function (n, s) { return n(); },
+        is: never,
+        isSome: never,
+        isNone: always,
+        getOr: id,
+        getOrThunk: call,
+        getOrDie: function (msg) {
+          throw new Error(msg || 'error: getOrDie called on none.');
+        },
+        or: id,
+        orThunk: call,
+        map: none,
+        ap: none,
+        each: noop,
+        bind: none,
+        flatten: none,
+        exists: never,
+        forall: always,
+        filter: none,
+        equals: eq,
+        equals_: eq,
+        toArray: function () { return []; },
+        toString: Fun.constant("none()")
+      };
+      if (Object.freeze) Object.freeze(me);
+      return me;
+    })();
+
+
+    /** some :: a -> Option a */
+    var some = function (a) {
+
+      // inlined from peanut, maybe a micro-optimisation?
+      var constant_a = function () { return a; };
+
+      var self = function () {
+        // can't Fun.constant this one
+        return me;
+      };
+
+      var map = function (f) {
+        return some(f(a));
+      };
+
+      var bind = function (f) {
+        return f(a);
+      };
+
+      var me = {
+        fold: function (n, s) { return s(a); },
+        is: function (v) { return a === v; },
+        isSome: always,
+        isNone: never,
+        getOr: constant_a,
+        getOrThunk: constant_a,
+        getOrDie: constant_a,
+        or: self,
+        orThunk: self,
+        map: map,
+        ap: function (optfab) {
+          return optfab.fold(none, function(fab) {
+            return some(fab(a));
+          });
+        },
+        each: function (f) {
+          f(a);
+        },
+        bind: bind,
+        flatten: constant_a,
+        exists: bind,
+        forall: bind,
+        filter: function (f) {
+          return f(a) ? me : NONE;
+        },
+        equals: function (o) {
+          return o.is(a);
+        },
+        equals_: function (o, elementEq) {
+          return o.fold(
+            never,
+            function (b) { return elementEq(a, b); }
+          );
+        },
+        toArray: function () {
+          return [a];
+        },
+        toString: function () {
+          return 'some(' + a + ')';
+        }
+      };
+      return me;
+    };
+
+    /** from :: undefined|null|a -> Option a */
+    var from = function (value) {
+      return value === null || value === undefined ? NONE : some(value);
+    };
+
+    return {
+      some: some,
+      none: none,
+      from: from
+    };
+  }
+);
+
+defineGlobal("global!String", String);
+define(
+  'ephox.katamari.api.Arr',
+
+  [
+    'ephox.katamari.api.Option',
+    'global!Array',
+    'global!Error',
+    'global!String'
+  ],
+
+  function (Option, Array, Error, String) {
+    // Use the native Array.indexOf if it is available (IE9+) otherwise fall back to manual iteration
+    // https://developer.mozilla.org/en/docs/Web/JavaScript/Reference/Global_Objects/Array/indexOf
+    var rawIndexOf = (function () {
+      var pIndexOf = Array.prototype.indexOf;
+
+      var fastIndex = function (xs, x) { return  pIndexOf.call(xs, x); };
+
+      var slowIndex = function(xs, x) { return slowIndexOf(xs, x); };
+
+      return pIndexOf === undefined ? slowIndex : fastIndex;
+    })();
+
+    var indexOf = function (xs, x) {
+      // The rawIndexOf method does not wrap up in an option. This is for performance reasons.
+      var r = rawIndexOf(xs, x);
+      return r === -1 ? Option.none() : Option.some(r);
+    };
+
+    var contains = function (xs, x) {
+      return rawIndexOf(xs, x) > -1;
+    };
+
+    // Using findIndex is likely less optimal in Chrome (dynamic return type instead of bool)
+    // but if we need that micro-optimisation we can inline it later.
+    var exists = function (xs, pred) {
+      return findIndex(xs, pred).isSome();
+    };
+
+    var range = function (num, f) {
+      var r = [];
+      for (var i = 0; i < num; i++) {
+        r.push(f(i));
+      }
+      return r;
+    };
+
+    // It's a total micro optimisation, but these do make some difference.
+    // Particularly for browsers other than Chrome.
+    // - length caching
+    // http://jsperf.com/browser-diet-jquery-each-vs-for-loop/69
+    // - not using push
+    // http://jsperf.com/array-direct-assignment-vs-push/2
+
+    var chunk = function (array, size) {
+      var r = [];
+      for (var i = 0; i < array.length; i += size) {
+        var s = array.slice(i, i + size);
+        r.push(s);
+      }
+      return r;
+    };
+
+    var map = function(xs, f) {
+      // pre-allocating array size when it's guaranteed to be known
+      // http://jsperf.com/push-allocated-vs-dynamic/22
+      var len = xs.length;
+      var r = new Array(len);
+      for (var i = 0; i < len; i++) {
+        var x = xs[i];
+        r[i] = f(x, i, xs);
+      }
+      return r;
+    };
+
+    // Unwound implementing other functions in terms of each.
+    // The code size is roughly the same, and it should allow for better optimisation.
+    var each = function(xs, f) {
+      for (var i = 0, len = xs.length; i < len; i++) {
+        var x = xs[i];
+        f(x, i, xs);
+      }
+    };
+
+    var eachr = function (xs, f) {
+      for (var i = xs.length - 1; i >= 0; i--) {
+        var x = xs[i];
+        f(x, i, xs);
+      }
+    };
+
+    var partition = function(xs, pred) {
+      var pass = [];
+      var fail = [];
+      for (var i = 0, len = xs.length; i < len; i++) {
+        var x = xs[i];
+        var arr = pred(x, i, xs) ? pass : fail;
+        arr.push(x);
+      }
+      return { pass: pass, fail: fail };
+    };
+
+    var filter = function(xs, pred) {
+      var r = [];
+      for (var i = 0, len = xs.length; i < len; i++) {
+        var x = xs[i];
+        if (pred(x, i, xs)) {
+          r.push(x);
+        }
+      }
+      return r;
+    };
+
+    /*
+     * Groups an array into contiguous arrays of like elements. Whether an element is like or not depends on f.
+     *
+     * f is a function that derives a value from an element - e.g. true or false, or a string.
+     * Elements are like if this function generates the same value for them (according to ===).
+     *
+     *
+     * Order of the elements is preserved. Arr.flatten() on the result will return the original list, as with Haskell groupBy function.
+     *  For a good explanation, see the group function (which is a special case of groupBy)
+     *  http://hackage.haskell.org/package/base-4.7.0.0/docs/Data-List.html#v:group
+     */
+    var groupBy = function (xs, f) {
+      if (xs.length === 0) {
+        return [];
+      } else {
+        var wasType = f(xs[0]); // initial case for matching
+        var r = [];
+        var group = [];
+
+        for (var i = 0, len = xs.length; i < len; i++) {
+          var x = xs[i];
+          var type = f(x);
+          if (type !== wasType) {
+            r.push(group);
+            group = [];
+          }
+          wasType = type;
+          group.push(x);
+        }
+        if (group.length !== 0) {
+          r.push(group);
+        }
+        return r;
+      }
+    };
+
+    var foldr = function (xs, f, acc) {
+      eachr(xs, function (x) {
+        acc = f(acc, x);
+      });
+      return acc;
+    };
+
+    var foldl = function (xs, f, acc) {
+      each(xs, function (x) {
+        acc = f(acc, x);
+      });
+      return acc;
+    };
+
+    var find = function (xs, pred) {
+      for (var i = 0, len = xs.length; i < len; i++) {
+        var x = xs[i];
+        if (pred(x, i, xs)) {
+          return Option.some(x);
+        }
+      }
+      return Option.none();
+    };
+
+    var findIndex = function (xs, pred) {
+      for (var i = 0, len = xs.length; i < len; i++) {
+        var x = xs[i];
+        if (pred(x, i, xs)) {
+          return Option.some(i);
+        }
+      }
+
+      return Option.none();
+    };
+
+    var slowIndexOf = function (xs, x) {
+      for (var i = 0, len = xs.length; i < len; ++i) {
+        if (xs[i] === x) {
+          return i;
+        }
+      }
+
+      return -1;
+    };
+
+    var push = Array.prototype.push;
+    var flatten = function (xs) {
+      // Note, this is possible because push supports multiple arguments:
+      // http://jsperf.com/concat-push/6
+      // Note that in the past, concat() would silently work (very slowly) for array-like objects.
+      // With this change it will throw an error.
+      var r = [];
+      for (var i = 0, len = xs.length; i < len; ++i) {
+        // Ensure that each value is an array itself
+        if (! Array.prototype.isPrototypeOf(xs[i])) throw new Error('Arr.flatten item ' + i + ' was not an array, input: ' + xs);
+        push.apply(r, xs[i]);
+      }
+      return r;
+    };
+
+    var bind = function (xs, f) {
+      var output = map(xs, f);
+      return flatten(output);
+    };
+
+    var forall = function (xs, pred) {
+      for (var i = 0, len = xs.length; i < len; ++i) {
+        var x = xs[i];
+        if (pred(x, i, xs) !== true) {
+          return false;
+        }
+      }
+      return true;
+    };
+
+    var equal = function (a1, a2) {
+      return a1.length === a2.length && forall(a1, function (x, i) {
+        return x === a2[i];
+      });
+    };
+
+    var slice = Array.prototype.slice;
+    var reverse = function (xs) {
+      var r = slice.call(xs, 0);
+      r.reverse();
+      return r;
+    };
+
+    var difference = function (a1, a2) {
+      return filter(a1, function (x) {
+        return !contains(a2, x);
+      });
+    };
+
+    var mapToObject = function(xs, f) {
+      var r = {};
+      for (var i = 0, len = xs.length; i < len; i++) {
+        var x = xs[i];
+        r[String(x)] = f(x, i);
+      }
+      return r;
+    };
+
+    var pure = function(x) {
+      return [x];
+    };
+
+    var sort = function (xs, comparator) {
+      var copy = slice.call(xs, 0);
+      copy.sort(comparator);
+      return copy;
+    };
+
+    return {
+      map: map,
+      each: each,
+      eachr: eachr,
+      partition: partition,
+      filter: filter,
+      groupBy: groupBy,
+      indexOf: indexOf,
+      foldr: foldr,
+      foldl: foldl,
+      find: find,
+      findIndex: findIndex,
+      flatten: flatten,
+      bind: bind,
+      forall: forall,
+      exists: exists,
+      contains: contains,
+      equal: equal,
+      reverse: reverse,
+      chunk: chunk,
+      difference: difference,
+      mapToObject: mapToObject,
+      pure: pure,
+      sort: sort,
+      range: range
+    };
+  }
+);
+define("global!console", [], function () { if (typeof console === "undefined") console = { log: function () {} }; return console; });
+defineGlobal("global!document", document);
+define(
+  'ephox.sugar.api.node.Element',
+
+  [
+    'ephox.katamari.api.Fun',
+    'global!Error',
+    'global!console',
+    'global!document'
+  ],
+
+  function (Fun, Error, console, document) {
+    var fromHtml = function (html, scope) {
+      var doc = scope || document;
+      var div = doc.createElement('div');
+      div.innerHTML = html;
+      if (!div.hasChildNodes() || div.childNodes.length > 1) {
+        console.error('HTML does not have a single root node', html);
+        throw 'HTML must have a single root node';
+      }
+      return fromDom(div.childNodes[0]);
+    };
+
+    var fromTag = function (tag, scope) {
+      var doc = scope || document;
+      var node = doc.createElement(tag);
+      return fromDom(node);
+    };
+
+    var fromText = function (text, scope) {
+      var doc = scope || document;
+      var node = doc.createTextNode(text);
+      return fromDom(node);
+    };
+
+    var fromDom = function (node) {
+      if (node === null || node === undefined) throw new Error('Node cannot be null or undefined');
+      return {
+        dom: Fun.constant(node)
+      };
+    };
+
+    return {
+      fromHtml: fromHtml,
+      fromTag: fromTag,
+      fromText: fromText,
+      fromDom: fromDom
+    };
+  }
+);
+
+/**
+ * Plugin.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+define(
+  'tinymce.plugins.visualchars.core.Data',
+
+  [
+  ],
+
+  function () {
+    var charMap = {
+      '\u00a0': 'nbsp',
+      '\u00ad': 'shy'
+    };
+
+    var charMapToRegExp = function (charMap, global) {
+      var key, regExp = '';
+
+      for (key in charMap) {
+        regExp += key;
+      }
+
+      return new RegExp('[' + regExp + ']', global ? 'g' : '');
+    };
+
+    var charMapToSelector = function (charMap) {
+      var key, selector = '';
+
+      for (key in charMap) {
+        if (selector) {
+          selector += ',';
+        }
+        selector += 'span.mce-' + charMap[key];
+      }
+
+      return selector;
+    };
+
+    return {
+      charMap: charMap,
+      regExp: charMapToRegExp(charMap),
+      regExpGlobal: charMapToRegExp(charMap, true),
+      selector: charMapToSelector(charMap),
+      charMapToRegExp: charMapToRegExp,
+      charMapToSelector: charMapToSelector
+    };
+  }
+);
+define(
+  'ephox.sugar.api.node.NodeTypes',
+
+  [
+
+  ],
+
+  function () {
+    return {
+      ATTRIBUTE:              2,
+      CDATA_SECTION:          4,
+      COMMENT:                8,
+      DOCUMENT:               9,
+      DOCUMENT_TYPE:          10,
+      DOCUMENT_FRAGMENT:      11,
+      ELEMENT:                1,
+      TEXT:                   3,
+      PROCESSING_INSTRUCTION: 7,
+      ENTITY_REFERENCE:       5,
+      ENTITY:                 6,
+      NOTATION:               12
+    };
+  }
+);
+define(
+  'ephox.sugar.api.node.Node',
+
+  [
+    'ephox.sugar.api.node.NodeTypes'
+  ],
+
+  function (NodeTypes) {
+    var name = function (element) {
+      var r = element.dom().nodeName;
+      return r.toLowerCase();
+    };
+
+    var type = function (element) {
+      return element.dom().nodeType;
+    };
+
+    var value = function (element) {
+      return element.dom().nodeValue;
+    };
+
+    var isType = function (t) {
+      return function (element) {
+        return type(element) === t;
+      };
+    };
+
+    var isComment = function (element) {
+      return type(element) === NodeTypes.COMMENT || name(element) === '#comment';
+    };
+
+    var isElement = isType(NodeTypes.ELEMENT);
+    var isText = isType(NodeTypes.TEXT);
+    var isDocument = isType(NodeTypes.DOCUMENT);
+
+    return {
+      name: name,
+      type: type,
+      value: value,
+      isElement: isElement,
+      isText: isText,
+      isDocument: isDocument,
+      isComment: isComment
+    };
+  }
+);
+
+define(
+  'tinymce.plugins.visualchars.core.Html',
+  [
+    'tinymce.plugins.visualchars.core.Data'
+  ],
+    function (Data) {
+      var wrapCharWithSpan = function (value) {
+        return '<span data-mce-bogus="1" class="mce-' + Data.charMap[value] + '">' + value + '</span>';
+      };
+
+      return {
+        wrapCharWithSpan: wrapCharWithSpan
+      };
+    }
+);
+
+/**
+ * Plugin.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.visualchars.core.Nodes',
+
+  [
+    'ephox.katamari.api.Arr',
+    'ephox.sugar.api.node.Element',
+    'ephox.sugar.api.node.Node',
+    'tinymce.plugins.visualchars.core.Data',
+    'tinymce.plugins.visualchars.core.Html'
+  ],
+
+  function (Arr, Element, Node, Data, Html) {
+    var isMatch = function (n) {
+      return Node.isText(n) &&
+        Node.value(n) !== undefined &&
+        Data.regExp.test(Node.value(n));
+    };
+
+    // inlined sugars PredicateFilter.descendants for file size
+    var filterDescendants = function (scope, predicate) {
+      var result = [];
+      var dom = scope.dom();
+      var children = Arr.map(dom.childNodes, Element.fromDom);
+
+      Arr.each(children, function (x) {
+        if (predicate(x)) {
+          result = result.concat([ x ]);
+        }
+        result = result.concat(filterDescendants(x, predicate));
+      });
+      return result;
+    };
+
+    var findParentElm = function (elm, rootElm) {
+      while (elm.parentNode) {
+        if (elm.parentNode === rootElm) {
+          return elm;
+        }
+        elm = elm.parentNode;
+      }
+    };
+
+    var replaceWithSpans = function (html) {
+      return html.replace(Data.regExpGlobal, Html.wrapCharWithSpan);
+    };
+
+    return {
+      isMatch: isMatch,
+      filterDescendants: filterDescendants,
+      findParentElm: findParentElm,
+      replaceWithSpans: replaceWithSpans
+    };
+  }
+);
+/**
+ * Plugin.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.visualchars.core.VisualChars',
+
+  [
+    'tinymce.plugins.visualchars.core.Data',
+    'tinymce.plugins.visualchars.core.Nodes',
+    'ephox.katamari.api.Arr',
+    'ephox.sugar.api.node.Element',
+    'ephox.sugar.api.node.Node'
+  ],
+
+  function (Data, Nodes, Arr, Element, Node) {
+    var show = function (editor, rootElm) {
+      var node, div;
+      var nodeList = Nodes.filterDescendants(Element.fromDom(rootElm), Nodes.isMatch);
+
+      Arr.each(nodeList, function (n) {
+        var withSpans = Nodes.replaceWithSpans(Node.value(n));
+
+        div = editor.dom.create('div', null, withSpans);
+        while ((node = div.lastChild)) {
+          editor.dom.insertAfter(node, n.dom());
+        }
+
+        editor.dom.remove(n.dom());
+      });
+    };
+
+    var hide = function (editor, body) {
+      var nodeList = editor.dom.select(Data.selector, body);
+
+      Arr.each(nodeList, function (node) {
+        editor.dom.remove(node, 1);
+      });
+    };
+
+    var toggle = function (editor) {
+      var body = editor.getBody();
+      var bookmark = editor.selection.getBookmark();
+      var parentNode = Nodes.findParentElm(editor.selection.getNode(), body);
+
+      // if user does select all the parentNode will be undefined
+      parentNode = parentNode !== undefined ? parentNode : body;
+
+      hide(editor, parentNode);
+      show(editor, parentNode);
+
+      editor.selection.moveToBookmark(bookmark);
+    };
+
+
+    return {
+      show: show,
+      hide: hide,
+      toggle: toggle
+    };
+  }
+);
+/**
+ * Plugin.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+define(
+  'tinymce.plugins.visualchars.Plugin',
+  [
+    'tinymce.core.PluginManager',
+    'tinymce.core.util.Delay',
+    'ephox.katamari.api.Arr',
+    'ephox.sugar.api.node.Element',
+    'tinymce.plugins.visualchars.core.VisualChars'
+  ],
+  function (PluginManager, Delay, Arr, Element, VisualChars) {
+    PluginManager.add('visualchars', function (editor) {
+      var self = this, state;
+
+      var toggleActiveState = function () {
+        var self = this;
+
+        editor.on('VisualChars', function (e) {
+          self.active(e.state);
+        });
+      };
+
+      var debouncedToggle = Delay.debounce(function () {
+        VisualChars.toggle(editor);
+      }, 300);
+
+      if (editor.settings.forced_root_block !== false) {
+        editor.on('keydown', function (e) {
+          if (self.state === true) {
+            e.keyCode === 13 ? VisualChars.toggle(editor) : debouncedToggle();
+          }
+        });
+      }
+
+      editor.addCommand('mceVisualChars', function () {
+        var body = editor.getBody(), selection = editor.selection, bookmark;
+
+        state = !state;
+        self.state = state;
+        editor.fire('VisualChars', { state: state });
+
+        bookmark = selection.getBookmark();
+
+        if (state === true) {
+          VisualChars.show(editor, body);
+        } else {
+          VisualChars.hide(editor, body);
+        }
+
+        selection.moveToBookmark(bookmark);
+      });
+
+      editor.addButton('visualchars', {
+        title: 'Show invisible characters',
+        cmd: 'mceVisualChars',
+        onPostRender: toggleActiveState
+      });
+
+      editor.addMenuItem('visualchars', {
+        text: 'Show invisible characters',
+        cmd: 'mceVisualChars',
+        onPostRender: toggleActiveState,
+        selectable: true,
+        context: 'view',
+        prependToContext: true
+      });
+    });
+
+    return function () {};
+  }
+);
+dem('tinymce.plugins.visualchars.Plugin')();
+})();
+(function () {
+
+var defs = {}; // id -> {dependencies, definition, instance (possibly undefined)}
+
+// Used when there is no 'main' module.
+// The name is probably (hopefully) unique so minification removes for releases.
+var register_3795 = function (id) {
+  var module = dem(id);
+  var fragments = id.split('.');
+  var target = Function('return this;')();
+  for (var i = 0; i < fragments.length - 1; ++i) {
+    if (target[fragments[i]] === undefined)
+      target[fragments[i]] = {};
+    target = target[fragments[i]];
+  }
+  target[fragments[fragments.length - 1]] = module;
+};
+
+var instantiate = function (id) {
+  var actual = defs[id];
+  var dependencies = actual.deps;
+  var definition = actual.defn;
+  var len = dependencies.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances[i] = dem(dependencies[i]);
+  var defResult = definition.apply(null, instances);
+  if (defResult === undefined)
+     throw 'module [' + id + '] returned undefined';
+  actual.instance = defResult;
+};
+
+var def = function (id, dependencies, definition) {
+  if (typeof id !== 'string')
+    throw 'module id must be a string';
+  else if (dependencies === undefined)
+    throw 'no dependencies for ' + id;
+  else if (definition === undefined)
+    throw 'no definition function for ' + id;
+  defs[id] = {
+    deps: dependencies,
+    defn: definition,
+    instance: undefined
+  };
+};
+
+var dem = function (id) {
+  var actual = defs[id];
+  if (actual === undefined)
+    throw 'module [' + id + '] was undefined';
+  else if (actual.instance === undefined)
+    instantiate(id);
+  return actual.instance;
+};
+
+var req = function (ids, callback) {
+  var len = ids.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances.push(dem(ids[i]));
+  callback.apply(null, callback);
+};
+
+var ephox = {};
+
+ephox.bolt = {
+  module: {
+    api: {
+      define: def,
+      require: req,
+      demand: dem
+    }
+  }
+};
+
+var define = def;
+var require = req;
+var demand = dem;
+// this helps with minificiation when using a lot of global references
+var defineGlobal = function (id, ref) {
+  define(id, [], function () { return ref; });
+};
+/*jsc
+["tinymce.plugins.paste.Plugin","tinymce.core.PluginManager","tinymce.plugins.paste.api.Events","tinymce.plugins.paste.core.Clipboard","tinymce.plugins.paste.core.CutCopy","tinymce.plugins.paste.core.Quirks","global!tinymce.util.Tools.resolve","tinymce.core.dom.RangeUtils","tinymce.core.Env","tinymce.core.util.Delay","tinymce.core.util.Tools","tinymce.core.util.VK","tinymce.plugins.paste.core.InternalHtml","tinymce.plugins.paste.core.Newlines","tinymce.plugins.paste.core.PasteBin","tinymce.plugins.paste.core.ProcessFilters","tinymce.plugins.paste.core.SmartPaste","tinymce.plugins.paste.core.Utils","tinymce.plugins.paste.core.WordFilter","tinymce.core.html.Entities","tinymce.core.html.DomParser","tinymce.core.html.Schema","tinymce.core.html.Serializer","tinymce.core.html.Node"]
+jsc*/
+defineGlobal("global!tinymce.util.Tools.resolve", tinymce.util.Tools.resolve);
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.PluginManager',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.PluginManager');
+  }
+);
+
+/**
+ * Events.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.paste.api.Events',
+  [
+  ],
+  function () {
+    var firePastePreProcess = function (editor, html, internal, isWordHtml) {
+      return editor.fire('PastePreProcess', { content: html, internal: internal, wordContent: isWordHtml });
+    };
+
+    var firePastePostProcess = function (editor, node, internal, isWordHtml) {
+      return editor.fire('PastePostProcess', { node: node, internal: internal, wordContent: isWordHtml });
+    };
+
+    var firePastePlainTextToggle = function (editor, state) {
+      return editor.fire('PastePlainTextToggle', { state: state });
+    };
+
+    return {
+      firePastePreProcess: firePastePreProcess,
+      firePastePostProcess: firePastePostProcess,
+      firePastePlainTextToggle: firePastePlainTextToggle
+    };
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.dom.RangeUtils',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.dom.RangeUtils');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.Env',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.Env');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.util.Delay',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.util.Delay');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.util.Tools',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.util.Tools');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.util.VK',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.util.VK');
+  }
+);
+
+/**
+ * InternalHtml.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.paste.core.InternalHtml',
+  [
+  ],
+  function () {
+    var internalMimeType = 'x-tinymce/html';
+    var internalMark = '<!-- ' + internalMimeType + ' -->';
+
+    var mark = function (html) {
+      return internalMark + html;
+    };
+
+    var unmark = function (html) {
+      return html.replace(internalMark, '');
+    };
+
+    var isMarked = function (html) {
+      return html.indexOf(internalMark) !== -1;
+    };
+
+    return {
+      mark: mark,
+      unmark: unmark,
+      isMarked: isMarked,
+      internalHtmlMime: function () {
+        return internalMimeType;
+      }
+    };
+  }
+);
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.html.Entities',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.html.Entities');
+  }
+);
+
+/**
+ * Newlines.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+/**
+ * Newlines class contains utilities to convert newlines (\n or \r\n) tp BRs or to a combination of the specified block element and BRs
+ *
+ * @class tinymce.Newlines
+ * @private
+ */
+define(
+  'tinymce.plugins.paste.core.Newlines',
+  [
+    'tinymce.core.util.Tools',
+    'tinymce.core.html.Entities'
+  ],
+  function (Tools, Entities) {
+
+    var isPlainText = function (text) {
+      // so basically any tag that is not one of the "p, div, span, br", or is one of them, but is followed
+      // by some additional characters qualifies the text as not a plain text (having some HTML tags)
+      // <span style="white-space:pre"> and <br /> are added as separate exceptions to the rule
+      return !/<(?:\/?(?!(?:div|p|br|span)>)\w+|(?:(?!(?:span style="white-space:\s?pre;?">)|br\s?\/>))\w+\s[^>]+)>/i.test(text);
+    };
+
+
+    var toBRs = function (text) {
+      return text.replace(/\r?\n/g, '<br>');
+    };
+
+
+    var openContainer = function (rootTag, rootAttrs) {
+      var key, attrs = [];
+      var tag = '<' + rootTag;
+
+      if (typeof rootAttrs === 'object') {
+        for (key in rootAttrs) {
+          if (rootAttrs.hasOwnProperty(key)) {
+            attrs.push(key + '="' + Entities.encodeAllRaw(rootAttrs[key]) + '"');
+          }
+        }
+
+        if (attrs.length) {
+          tag += ' ' + attrs.join(' ');
+        }
+      }
+      return tag + '>';
+    };
+
+
+    var toBlockElements = function (text, rootTag, rootAttrs) {
+      var blocks = text.split(/\n\n/);
+      var tagOpen = openContainer(rootTag, rootAttrs);
+      var tagClose = '</' + rootTag + '>';
+
+      var paragraphs = Tools.map(blocks, function (p) {
+        return p.split(/\n/).join('<br />');
+      });
+
+      var stitch = function (p) {
+        return tagOpen + p + tagClose;
+      };
+
+      return paragraphs.length === 1 ? paragraphs[0] : Tools.map(paragraphs, stitch).join('');
+    };
+
+
+    var convert = function (text, rootTag, rootAttrs) {
+      return rootTag ? toBlockElements(text, rootTag, rootAttrs) : toBRs(text);
+    };
+
+
+    return {
+      isPlainText: isPlainText,
+      convert: convert,
+      toBRs: toBRs,
+      toBlockElements: toBlockElements
+    };
+  }
+);
+/**
+ * PasteBin.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+/**
+ * @class tinymce.pasteplugin.PasteBin
+ * @private
+ */
+define(
+  'tinymce.plugins.paste.core.PasteBin',
+  [
+    'tinymce.core.util.Tools',
+    'tinymce.core.Env'
+  ],
+  function (Tools, Env) {
+    return function (editor) {
+      var lastRng;
+      var pasteBinDefaultContent = '%MCEPASTEBIN%';
+
+      /**
+       * Creates a paste bin element as close as possible to the current caret location and places the focus inside that element
+       * so that when the real paste event occurs the contents gets inserted into this element
+       * instead of the current editor selection element.
+       */
+      var create = function () {
+        var dom = editor.dom, body = editor.getBody();
+        var viewport = editor.dom.getViewPort(editor.getWin()), scrollTop = viewport.y, top = 20;
+        var pasteBinElm;
+        var scrollContainer;
+
+        lastRng = editor.selection.getRng();
+
+        if (editor.inline) {
+          scrollContainer = editor.selection.getScrollContainer();
+
+          // Can't always rely on scrollTop returning a useful value.
+          // It returns 0 if the browser doesn't support scrollTop for the element or is non-scrollable
+          if (scrollContainer && scrollContainer.scrollTop > 0) {
+            scrollTop = scrollContainer.scrollTop;
+          }
+        }
+
+        /**
+         * Returns the rect of the current caret if the caret is in an empty block before a
+         * BR we insert a temporary invisible character that we get the rect this way we always get a proper rect.
+         *
+         * TODO: This might be useful in core.
+         */
+        function getCaretRect(rng) {
+          var rects, textNode, node, container = rng.startContainer;
+
+          rects = rng.getClientRects();
+          if (rects.length) {
+            return rects[0];
+          }
+
+          if (!rng.collapsed || container.nodeType != 1) {
+            return;
+          }
+
+          node = container.childNodes[lastRng.startOffset];
+
+          // Skip empty whitespace nodes
+          while (node && node.nodeType == 3 && !node.data.length) {
+            node = node.nextSibling;
+          }
+
+          if (!node) {
+            return;
+          }
+
+          // Check if the location is |<br>
+          // TODO: Might need to expand this to say |<table>
+          if (node.tagName == 'BR') {
+            textNode = dom.doc.createTextNode('\uFEFF');
+            node.parentNode.insertBefore(textNode, node);
+
+            rng = dom.createRng();
+            rng.setStartBefore(textNode);
+            rng.setEndAfter(textNode);
+
+            rects = rng.getClientRects();
+            dom.remove(textNode);
+          }
+
+          if (rects.length) {
+            return rects[0];
+          }
+        }
+
+        // Calculate top cordinate this is needed to avoid scrolling to top of document
+        // We want the paste bin to be as close to the caret as possible to avoid scrolling
+        if (lastRng.getClientRects) {
+          var rect = getCaretRect(lastRng);
+
+          if (rect) {
+            // Client rects gets us closes to the actual
+            // caret location in for example a wrapped paragraph block
+            top = scrollTop + (rect.top - dom.getPos(body).y);
+          } else {
+            top = scrollTop;
+
+            // Check if we can find a closer location by checking the range element
+            var container = lastRng.startContainer;
+            if (container) {
+              if (container.nodeType == 3 && container.parentNode != body) {
+                container = container.parentNode;
+              }
+
+              if (container.nodeType == 1) {
+                top = dom.getPos(container, scrollContainer || body).y;
+              }
+            }
+          }
+        }
+
+        // Create a pastebin
+        pasteBinElm = editor.dom.add(editor.getBody(), 'div', {
+          id: "mcepastebin",
+          contentEditable: true,
+          "data-mce-bogus": "all",
+          style: 'position: absolute; top: ' + top + 'px; width: 10px; height: 10px; overflow: hidden; opacity: 0'
+        }, pasteBinDefaultContent);
+
+        // Move paste bin out of sight since the controlSelection rect gets displayed otherwise on IE and Gecko
+        if (Env.ie || Env.gecko) {
+          dom.setStyle(pasteBinElm, 'left', dom.getStyle(body, 'direction', true) == 'rtl' ? 0xFFFF : -0xFFFF);
+        }
+
+        // Prevent focus events from bubbeling fixed FocusManager issues
+        dom.bind(pasteBinElm, 'beforedeactivate focusin focusout', function (e) {
+          e.stopPropagation();
+        });
+
+        pasteBinElm.focus();
+        editor.selection.select(pasteBinElm, true);
+      };
+
+      /**
+       * Removes the paste bin if it exists.
+       */
+      var remove = function () {
+        if (getEl()) {
+          var pasteBinClone;
+
+          // WebKit/Blink might clone the div so
+          // lets make sure we remove all clones
+          // TODO: Man o man is this ugly. WebKit is the new IE! Remove this if they ever fix it!
+          while ((pasteBinClone = editor.dom.get('mcepastebin'))) {
+            editor.dom.remove(pasteBinClone);
+            editor.dom.unbind(pasteBinClone);
+          }
+
+          if (lastRng) {
+            editor.selection.setRng(lastRng);
+          }
+        }
+
+        lastRng = null;
+      };
+
+
+      var getEl = function () {
+        return editor.dom.get('mcepastebin');
+      };
+
+      /**
+       * Returns the contents of the paste bin as a HTML string.
+       *
+       * @return {String} Get the contents of the paste bin.
+       */
+      var getHtml = function () {
+        var pasteBinElm, pasteBinClones, i, dirtyWrappers, cleanWrapper;
+
+        // Since WebKit/Chrome might clone the paste bin when pasting
+        // for example: <img style="float: right"> we need to check if any of them contains some useful html.
+        // TODO: Man o man is this ugly. WebKit is the new IE! Remove this if they ever fix it!
+
+        var copyAndRemove = function (toElm, fromElm) {
+          toElm.appendChild(fromElm);
+          editor.dom.remove(fromElm, true); // remove, but keep children
+        };
+
+        // find only top level elements (there might be more nested inside them as well, see TINY-1162)
+        pasteBinClones = Tools.grep(editor.getBody().childNodes, function (elm) {
+          return elm.id === 'mcepastebin';
+        });
+        pasteBinElm = pasteBinClones.shift();
+
+        // if clones were found, move their content into the first bin
+        Tools.each(pasteBinClones, function (pasteBinClone) {
+          copyAndRemove(pasteBinElm, pasteBinClone);
+        });
+
+        // TINY-1162: when copying plain text (from notepad for example) WebKit clones
+        // paste bin (with styles and attributes) and uses it as a default  wrapper for
+        // the chunks of the content, here we cycle over the whole paste bin and replace
+        // those wrappers with a basic div
+        dirtyWrappers = editor.dom.select('div[id=mcepastebin]', pasteBinElm);
+        for (i = dirtyWrappers.length - 1; i >= 0; i--) {
+          cleanWrapper = editor.dom.create('div');
+          pasteBinElm.insertBefore(cleanWrapper, dirtyWrappers[i]);
+          copyAndRemove(cleanWrapper, dirtyWrappers[i]);
+        }
+
+        return pasteBinElm.innerHTML;
+      };
+
+
+      var getLastRng = function () {
+        return lastRng;
+      };
+
+
+      var isDefaultContent = function (content) {
+        return content === pasteBinDefaultContent;
+      };
+
+
+      var isPasteBin = function (elm) {
+        return elm && elm.id === 'mcepastebin';
+      };
+
+
+      var isDefault = function () {
+        var pasteBinElm = getEl();
+        return isPasteBin(pasteBinElm) && isDefaultContent(pasteBinElm.innerHTML);
+      };
+
+      return {
+        create: create,
+        remove: remove,
+        getEl: getEl,
+        getHtml: getHtml,
+        getLastRng: getLastRng,
+        isDefault: isDefault,
+        isDefaultContent: isDefaultContent
+      };
+    };
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.html.DomParser',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.html.DomParser');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.html.Schema',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.html.Schema');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.html.Serializer',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.html.Serializer');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.html.Node',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.html.Node');
+  }
+);
+
+/**
+ * Utils.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+/**
+ * This class contails various utility functions for the paste plugin.
+ *
+ * @class tinymce.pasteplugin.Utils
+ */
+define(
+  'tinymce.plugins.paste.core.Utils',
+  [
+    'tinymce.core.util.Tools',
+    'tinymce.core.html.DomParser',
+    'tinymce.core.html.Schema'
+  ],
+  function (Tools, DomParser, Schema) {
+    function filter(content, items) {
+      Tools.each(items, function (v) {
+        if (v.constructor == RegExp) {
+          content = content.replace(v, '');
+        } else {
+          content = content.replace(v[0], v[1]);
+        }
+      });
+
+      return content;
+    }
+
+    /**
+     * Gets the innerText of the specified element. It will handle edge cases
+     * and works better than textContent on Gecko.
+     *
+     * @param {String} html HTML string to get text from.
+     * @return {String} String of text with line feeds.
+     */
+    function innerText(html) {
+      var schema = new Schema(), domParser = new DomParser({}, schema), text = '';
+      var shortEndedElements = schema.getShortEndedElements();
+      var ignoreElements = Tools.makeMap('script noscript style textarea video audio iframe object', ' ');
+      var blockElements = schema.getBlockElements();
+
+      function walk(node) {
+        var name = node.name, currentNode = node;
+
+        if (name === 'br') {
+          text += '\n';
+          return;
+        }
+
+        // img/input/hr
+        if (shortEndedElements[name]) {
+          text += ' ';
+        }
+
+        // Ingore script, video contents
+        if (ignoreElements[name]) {
+          text += ' ';
+          return;
+        }
+
+        if (node.type == 3) {
+          text += node.value;
+        }
+
+        // Walk all children
+        if (!node.shortEnded) {
+          if ((node = node.firstChild)) {
+            do {
+              walk(node);
+            } while ((node = node.next));
+          }
+        }
+
+        // Add \n or \n\n for blocks or P
+        if (blockElements[name] && currentNode.next) {
+          text += '\n';
+
+          if (name == 'p') {
+            text += '\n';
+          }
+        }
+      }
+
+      html = filter(html, [
+        /<!\[[^\]]+\]>/g // Conditional comments
+      ]);
+
+      walk(domParser.parse(html));
+
+      return text;
+    }
+
+    /**
+     * Trims the specified HTML by removing all WebKit fragments, all elements wrapping the body trailing BR elements etc.
+     *
+     * @param {String} html Html string to trim contents on.
+     * @return {String} Html contents that got trimmed.
+     */
+    function trimHtml(html) {
+      function trimSpaces(all, s1, s2) {
+        // WebKit &nbsp; meant to preserve multiple spaces but instead inserted around all inline tags,
+        // including the spans with inline styles created on paste
+        if (!s1 && !s2) {
+          return ' ';
+        }
+
+        return '\u00a0';
+      }
+
+      html = filter(html, [
+        /^[\s\S]*<body[^>]*>\s*|\s*<\/body[^>]*>[\s\S]*$/ig, // Remove anything but the contents within the BODY element
+        /<!--StartFragment-->|<!--EndFragment-->/g, // Inner fragments (tables from excel on mac)
+        [/( ?)<span class="Apple-converted-space">\u00a0<\/span>( ?)/g, trimSpaces],
+        /<br class="Apple-interchange-newline">/g,
+        /<br>$/i // Trailing BR elements
+      ]);
+
+      return html;
+    }
+
+    // TODO: Should be in some global class
+    function createIdGenerator(prefix) {
+      var count = 0;
+
+      return function () {
+        return prefix + (count++);
+      };
+    }
+
+    var isMsEdge = function () {
+      return navigator.userAgent.indexOf(' Edge/') !== -1;
+    };
+
+    return {
+      filter: filter,
+      innerText: innerText,
+      trimHtml: trimHtml,
+      createIdGenerator: createIdGenerator,
+      isMsEdge: isMsEdge
+    };
+  }
+);
+
+/**
+ * WordFilter.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+/**
+ * This class parses word HTML into proper TinyMCE markup.
+ *
+ * @class tinymce.pasteplugin.WordFilter
+ * @private
+ */
+define(
+  'tinymce.plugins.paste.core.WordFilter',
+  [
+    'tinymce.core.util.Tools',
+    'tinymce.core.html.DomParser',
+    'tinymce.core.html.Schema',
+    'tinymce.core.html.Serializer',
+    'tinymce.core.html.Node',
+    'tinymce.plugins.paste.core.Utils'
+  ],
+  function (Tools, DomParser, Schema, Serializer, Node, Utils) {
+    /**
+     * Checks if the specified content is from any of the following sources: MS Word/Office 365/Google docs.
+     */
+    function isWordContent(content) {
+      return (
+        (/<font face="Times New Roman"|class="?Mso|style="[^"]*\bmso-|style='[^'']*\bmso-|w:WordDocument/i).test(content) ||
+        (/class="OutlineElement/).test(content) ||
+        (/id="?docs\-internal\-guid\-/.test(content))
+      );
+    }
+
+    /**
+     * Checks if the specified text starts with "1. " or "a. " etc.
+     */
+    function isNumericList(text) {
+      var found, patterns;
+
+      patterns = [
+        /^[IVXLMCD]{1,2}\.[ \u00a0]/,  // Roman upper case
+        /^[ivxlmcd]{1,2}\.[ \u00a0]/,  // Roman lower case
+        /^[a-z]{1,2}[\.\)][ \u00a0]/,  // Alphabetical a-z
+        /^[A-Z]{1,2}[\.\)][ \u00a0]/,  // Alphabetical A-Z
+        /^[0-9]+\.[ \u00a0]/,          // Numeric lists
+        /^[\u3007\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u4e03\u516b\u4e5d]+\.[ \u00a0]/, // Japanese
+        /^[\u58f1\u5f10\u53c2\u56db\u4f0d\u516d\u4e03\u516b\u4e5d\u62fe]+\.[ \u00a0]/  // Chinese
+      ];
+
+      text = text.replace(/^[\u00a0 ]+/, '');
+
+      Tools.each(patterns, function (pattern) {
+        if (pattern.test(text)) {
+          found = true;
+          return false;
+        }
+      });
+
+      return found;
+    }
+
+    function isBulletList(text) {
+      return /^[\s\u00a0]*[\u2022\u00b7\u00a7\u25CF]\s*/.test(text);
+    }
+
+    /**
+     * Converts fake bullet and numbered lists to real semantic OL/UL.
+     *
+     * @param {tinymce.html.Node} node Root node to convert children of.
+     */
+    function convertFakeListsToProperLists(node) {
+      var currentListNode, prevListNode, lastLevel = 1;
+
+      function getText(node) {
+        var txt = '';
+
+        if (node.type === 3) {
+          return node.value;
+        }
+
+        if ((node = node.firstChild)) {
+          do {
+            txt += getText(node);
+          } while ((node = node.next));
+        }
+
+        return txt;
+      }
+
+      function trimListStart(node, regExp) {
+        if (node.type === 3) {
+          if (regExp.test(node.value)) {
+            node.value = node.value.replace(regExp, '');
+            return false;
+          }
+        }
+
+        if ((node = node.firstChild)) {
+          do {
+            if (!trimListStart(node, regExp)) {
+              return false;
+            }
+          } while ((node = node.next));
+        }
+
+        return true;
+      }
+
+      function removeIgnoredNodes(node) {
+        if (node._listIgnore) {
+          node.remove();
+          return;
+        }
+
+        if ((node = node.firstChild)) {
+          do {
+            removeIgnoredNodes(node);
+          } while ((node = node.next));
+        }
+      }
+
+      function convertParagraphToLi(paragraphNode, listName, start) {
+        var level = paragraphNode._listLevel || lastLevel;
+
+        // Handle list nesting
+        if (level != lastLevel) {
+          if (level < lastLevel) {
+            // Move to parent list
+            if (currentListNode) {
+              currentListNode = currentListNode.parent.parent;
+            }
+          } else {
+            // Create new list
+            prevListNode = currentListNode;
+            currentListNode = null;
+          }
+        }
+
+        if (!currentListNode || currentListNode.name != listName) {
+          prevListNode = prevListNode || currentListNode;
+          currentListNode = new Node(listName, 1);
+
+          if (start > 1) {
+            currentListNode.attr('start', '' + start);
+          }
+
+          paragraphNode.wrap(currentListNode);
+        } else {
+          currentListNode.append(paragraphNode);
+        }
+
+        paragraphNode.name = 'li';
+
+        // Append list to previous list if it exists
+        if (level > lastLevel && prevListNode) {
+          prevListNode.lastChild.append(currentListNode);
+        }
+
+        lastLevel = level;
+
+        // Remove start of list item "1. " or "&middot; " etc
+        removeIgnoredNodes(paragraphNode);
+        trimListStart(paragraphNode, /^\u00a0+/);
+        trimListStart(paragraphNode, /^\s*([\u2022\u00b7\u00a7\u25CF]|\w+\.)/);
+        trimListStart(paragraphNode, /^\u00a0+/);
+      }
+
+      // Build a list of all root level elements before we start
+      // altering them in the loop below.
+      var elements = [], child = node.firstChild;
+      while (typeof child !== 'undefined' && child !== null) {
+        elements.push(child);
+
+        child = child.walk();
+        if (child !== null) {
+          while (typeof child !== 'undefined' && child.parent !== node) {
+            child = child.walk();
+          }
+        }
+      }
+
+      for (var i = 0; i < elements.length; i++) {
+        node = elements[i];
+
+        if (node.name == 'p' && node.firstChild) {
+          // Find first text node in paragraph
+          var nodeText = getText(node);
+
+          // Detect unordered lists look for bullets
+          if (isBulletList(nodeText)) {
+            convertParagraphToLi(node, 'ul');
+            continue;
+          }
+
+          // Detect ordered lists 1., a. or ixv.
+          if (isNumericList(nodeText)) {
+            // Parse OL start number
+            var matches = /([0-9]+)\./.exec(nodeText);
+            var start = 1;
+            if (matches) {
+              start = parseInt(matches[1], 10);
+            }
+
+            convertParagraphToLi(node, 'ol', start);
+            continue;
+          }
+
+          // Convert paragraphs marked as lists but doesn't look like anything
+          if (node._listLevel) {
+            convertParagraphToLi(node, 'ul', 1);
+            continue;
+          }
+
+          currentListNode = null;
+        } else {
+          // If the root level element isn't a p tag which can be
+          // processed by convertParagraphToLi, it interrupts the
+          // lists, causing a new list to start instead of having
+          // elements from the next list inserted above this tag.
+          prevListNode = currentListNode;
+          currentListNode = null;
+        }
+      }
+    }
+
+    function filterStyles(editor, validStyles, node, styleValue) {
+      var outputStyles = {}, matches, styles = editor.dom.parseStyle(styleValue);
+
+      Tools.each(styles, function (value, name) {
+        // Convert various MS styles to W3C styles
+        switch (name) {
+          case 'mso-list':
+            // Parse out list indent level for lists
+            matches = /\w+ \w+([0-9]+)/i.exec(styleValue);
+            if (matches) {
+              node._listLevel = parseInt(matches[1], 10);
+            }
+
+            // Remove these nodes <span style="mso-list:Ignore">o</span>
+            // Since the span gets removed we mark the text node and the span
+            if (/Ignore/i.test(value) && node.firstChild) {
+              node._listIgnore = true;
+              node.firstChild._listIgnore = true;
+            }
+
+            break;
+
+          case "horiz-align":
+            name = "text-align";
+            break;
+
+          case "vert-align":
+            name = "vertical-align";
+            break;
+
+          case "font-color":
+          case "mso-foreground":
+            name = "color";
+            break;
+
+          case "mso-background":
+          case "mso-highlight":
+            name = "background";
+            break;
+
+          case "font-weight":
+          case "font-style":
+            if (value != "normal") {
+              outputStyles[name] = value;
+            }
+            return;
+
+          case "mso-element":
+            // Remove track changes code
+            if (/^(comment|comment-list)$/i.test(value)) {
+              node.remove();
+              return;
+            }
+
+            break;
+        }
+
+        if (name.indexOf('mso-comment') === 0) {
+          node.remove();
+          return;
+        }
+
+        // Never allow mso- prefixed names
+        if (name.indexOf('mso-') === 0) {
+          return;
+        }
+
+        // Output only valid styles
+        if (editor.settings.paste_retain_style_properties == "all" || (validStyles && validStyles[name])) {
+          outputStyles[name] = value;
+        }
+      });
+
+      // Convert bold style to "b" element
+      if (/(bold)/i.test(outputStyles["font-weight"])) {
+        delete outputStyles["font-weight"];
+        node.wrap(new Node("b", 1));
+      }
+
+      // Convert italic style to "i" element
+      if (/(italic)/i.test(outputStyles["font-style"])) {
+        delete outputStyles["font-style"];
+        node.wrap(new Node("i", 1));
+      }
+
+      // Serialize the styles and see if there is something left to keep
+      outputStyles = editor.dom.serializeStyle(outputStyles, node.name);
+      if (outputStyles) {
+        return outputStyles;
+      }
+
+      return null;
+    }
+
+    var filterWordContent = function (editor, content) {
+      var retainStyleProperties, validStyles;
+
+      retainStyleProperties = editor.settings.paste_retain_style_properties;
+      if (retainStyleProperties) {
+        validStyles = Tools.makeMap(retainStyleProperties.split(/[, ]/));
+      }
+
+      // Remove basic Word junk
+      content = Utils.filter(content, [
+        // Remove apple new line markers
+        /<br class="?Apple-interchange-newline"?>/gi,
+
+        // Remove google docs internal guid markers
+        /<b[^>]+id="?docs-internal-[^>]*>/gi,
+
+        // Word comments like conditional comments etc
+        /<!--[\s\S]+?-->/gi,
+
+        // Remove comments, scripts (e.g., msoShowComment), XML tag, VML content,
+        // MS Office namespaced tags, and a few other tags
+        /<(!|script[^>]*>.*?<\/script(?=[>\s])|\/?(\?xml(:\w+)?|img|meta|link|style|\w:\w+)(?=[\s\/>]))[^>]*>/gi,
+
+        // Convert <s> into <strike> for line-though
+        [/<(\/?)s>/gi, "<$1strike>"],
+
+        // Replace nsbp entites to char since it's easier to handle
+        [/&nbsp;/gi, "\u00a0"],
+
+        // Convert <span style="mso-spacerun:yes">___</span> to string of alternating
+        // breaking/non-breaking spaces of same length
+        [/<span\s+style\s*=\s*"\s*mso-spacerun\s*:\s*yes\s*;?\s*"\s*>([\s\u00a0]*)<\/span>/gi,
+          function (str, spaces) {
+            return (spaces.length > 0) ?
+              spaces.replace(/./, " ").slice(Math.floor(spaces.length / 2)).split("").join("\u00a0") : "";
+          }
+        ]
+      ]);
+
+      var validElements = editor.settings.paste_word_valid_elements;
+      if (!validElements) {
+        validElements = (
+          '-strong/b,-em/i,-u,-span,-p,-ol,-ul,-li,-h1,-h2,-h3,-h4,-h5,-h6,' +
+          '-p/div,-a[href|name],sub,sup,strike,br,del,table[width],tr,' +
+          'td[colspan|rowspan|width],th[colspan|rowspan|width],thead,tfoot,tbody'
+        );
+      }
+
+      // Setup strict schema
+      var schema = new Schema({
+        valid_elements: validElements,
+        valid_children: '-li[p]'
+      });
+
+      // Add style/class attribute to all element rules since the user might have removed them from
+      // paste_word_valid_elements config option and we need to check them for properties
+      Tools.each(schema.elements, function (rule) {
+        /*eslint dot-notation:0*/
+        if (!rule.attributes["class"]) {
+          rule.attributes["class"] = {};
+          rule.attributesOrder.push("class");
+        }
+
+        if (!rule.attributes.style) {
+          rule.attributes.style = {};
+          rule.attributesOrder.push("style");
+        }
+      });
+
+      // Parse HTML into DOM structure
+      var domParser = new DomParser({}, schema);
+
+      // Filter styles to remove "mso" specific styles and convert some of them
+      domParser.addAttributeFilter('style', function (nodes) {
+        var i = nodes.length, node;
+
+        while (i--) {
+          node = nodes[i];
+          node.attr('style', filterStyles(editor, validStyles, node, node.attr('style')));
+
+          // Remove pointess spans
+          if (node.name == 'span' && node.parent && !node.attributes.length) {
+            node.unwrap();
+          }
+        }
+      });
+
+      // Check the class attribute for comments or del items and remove those
+      domParser.addAttributeFilter('class', function (nodes) {
+        var i = nodes.length, node, className;
+
+        while (i--) {
+          node = nodes[i];
+
+          className = node.attr('class');
+          if (/^(MsoCommentReference|MsoCommentText|msoDel)$/i.test(className)) {
+            node.remove();
+          }
+
+          node.attr('class', null);
+        }
+      });
+
+      // Remove all del elements since we don't want the track changes code in the editor
+      domParser.addNodeFilter('del', function (nodes) {
+        var i = nodes.length;
+
+        while (i--) {
+          nodes[i].remove();
+        }
+      });
+
+      // Keep some of the links and anchors
+      domParser.addNodeFilter('a', function (nodes) {
+        var i = nodes.length, node, href, name;
+
+        while (i--) {
+          node = nodes[i];
+          href = node.attr('href');
+          name = node.attr('name');
+
+          if (href && href.indexOf('#_msocom_') != -1) {
+            node.remove();
+            continue;
+          }
+
+          if (href && href.indexOf('file://') === 0) {
+            href = href.split('#')[1];
+            if (href) {
+              href = '#' + href;
+            }
+          }
+
+          if (!href && !name) {
+            node.unwrap();
+          } else {
+            // Remove all named anchors that aren't specific to TOC, Footnotes or Endnotes
+            if (name && !/^_?(?:toc|edn|ftn)/i.test(name)) {
+              node.unwrap();
+              continue;
+            }
+
+            node.attr({
+              href: href,
+              name: name
+            });
+          }
+        }
+      });
+
+      // Parse into DOM structure
+      var rootNode = domParser.parse(content);
+
+      // Process DOM
+      if (editor.settings.paste_convert_word_fake_lists !== false) {
+        convertFakeListsToProperLists(rootNode);
+      }
+
+      // Serialize DOM back to HTML
+      content = new Serializer({
+        validate: editor.settings.validate
+      }, schema).serialize(rootNode);
+
+      return content;
+    };
+
+    var preProcess = function (editor, content) {
+      return editor.settings.paste_enable_default_filters === false ? content : filterWordContent(editor, content);
+    };
+
+    return {
+      preProcess: preProcess,
+      isWordContent: isWordContent
+    };
+  }
+);
+
+/**
+ * ProcessFilters.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.paste.core.ProcessFilters',
+  [
+    'tinymce.plugins.paste.api.Events',
+    'tinymce.plugins.paste.core.WordFilter'
+  ],
+  function (Events, WordFilter) {
+    var processResult = function (content, cancelled) {
+      return { content: content, cancelled: cancelled };
+    };
+
+    var postProcessFilter = function (editor, html, internal, isWordHtml) {
+      var tempBody = editor.dom.create('div', { style: 'display:none' }, html);
+      var postProcessArgs = Events.firePastePostProcess(editor, tempBody, internal, isWordHtml);
+      return processResult(postProcessArgs.node.innerHTML, postProcessArgs.isDefaultPrevented());
+    };
+
+    var filterContent = function (editor, content, internal, isWordHtml) {
+      var preProcessArgs = Events.firePastePreProcess(editor, content, internal, isWordHtml);
+
+      if (editor.hasEventListeners('PastePostProcess') && !preProcessArgs.isDefaultPrevented()) {
+        return postProcessFilter(editor, preProcessArgs.content, internal, isWordHtml);
+      } else {
+        return processResult(preProcessArgs.content, preProcessArgs.isDefaultPrevented());
+      }
+    };
+
+    var process = function (editor, html, internal) {
+      var isWordHtml = WordFilter.isWordContent(html);
+      var content = isWordHtml ? WordFilter.preProcess(editor, html) : html;
+
+      return filterContent(editor, content, internal, isWordHtml);
+    };
+
+    return {
+      process: process
+    };
+  }
+);
+
+/**
+ * SmartPaste.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+/**
+ * Tries to be smart depending on what the user pastes if it looks like an url
+ * it will make a link out of the current selection. If it's an image url that looks
+ * like an image it will check if it's an image and insert it as an image.
+ *
+ * @class tinymce.pasteplugin.SmartPaste
+ * @private
+ */
+define(
+  'tinymce.plugins.paste.core.SmartPaste',
+  [
+    'tinymce.core.util.Tools'
+  ],
+  function (Tools) {
+    var isAbsoluteUrl = function (url) {
+      return /^https?:\/\/[\w\?\-\/+=.&%@~#]+$/i.test(url);
+    };
+
+    var isImageUrl = function (url) {
+      return isAbsoluteUrl(url) && /.(gif|jpe?g|png)$/.test(url);
+    };
+
+    var createImage = function (editor, url, pasteHtml) {
+      editor.undoManager.extra(function () {
+        pasteHtml(editor, url);
+      }, function () {
+        editor.insertContent('<img src="' + url + '">');
+      });
+
+      return true;
+    };
+
+    var createLink = function (editor, url, pasteHtml) {
+      editor.undoManager.extra(function () {
+        pasteHtml(editor, url);
+      }, function () {
+        editor.execCommand('mceInsertLink', false, url);
+      });
+
+      return true;
+    };
+
+    var linkSelection = function (editor, html, pasteHtml) {
+      return editor.selection.isCollapsed() === false && isAbsoluteUrl(html) ? createLink(editor, html, pasteHtml) : false;
+    };
+
+    var insertImage = function (editor, html, pasteHtml) {
+      return isImageUrl(html) ? createImage(editor, html, pasteHtml) : false;
+    };
+
+    var pasteHtml = function (editor, html) {
+      editor.insertContent(html, {
+        merge: editor.settings.paste_merge_formats !== false,
+        paste: true
+      });
+
+      return true;
+    };
+
+    var smartInsertContent = function (editor, html) {
+      Tools.each([
+        linkSelection,
+        insertImage,
+        pasteHtml
+      ], function (action) {
+        return action(editor, html, pasteHtml) !== true;
+      });
+    };
+
+    var insertContent = function (editor, html) {
+      if (editor.settings.smart_paste === false) {
+        pasteHtml(editor, html);
+      } else {
+        smartInsertContent(editor, html);
+      }
+    };
+
+    return {
+      isImageUrl: isImageUrl,
+      isAbsoluteUrl: isAbsoluteUrl,
+      insertContent: insertContent
+    };
+  }
+);
+
+/**
+ * Clipboard.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+/**
+ * This class contains logic for getting HTML contents out of the clipboard.
+ *
+ * We need to make a lot of ugly hacks to get the contents out of the clipboard since
+ * the W3C Clipboard API is broken in all browsers that have it: Gecko/WebKit/Blink.
+ * We might rewrite this the way those API:s stabilize. Browsers doesn't handle pasting
+ * from applications like Word the same way as it does when pasting into a contentEditable area
+ * so we need to do lots of extra work to try to get to this clipboard data.
+ *
+ * Current implementation steps:
+ *  1. On keydown with paste keys Ctrl+V or Shift+Insert create
+ *     a paste bin element and move focus to that element.
+ *  2. Wait for the browser to fire a "paste" event and get the contents out of the paste bin.
+ *  3. Check if the paste was successful if true, process the HTML.
+ *  (4). If the paste was unsuccessful use IE execCommand, Clipboard API, document.dataTransfer old WebKit API etc.
+ *
+ * @class tinymce.pasteplugin.Clipboard
+ * @private
+ */
+define(
+  'tinymce.plugins.paste.core.Clipboard',
+  [
+    'tinymce.core.dom.RangeUtils',
+    'tinymce.core.Env',
+    'tinymce.core.util.Delay',
+    'tinymce.core.util.Tools',
+    'tinymce.core.util.VK',
+    'tinymce.plugins.paste.core.InternalHtml',
+    'tinymce.plugins.paste.core.Newlines',
+    'tinymce.plugins.paste.core.PasteBin',
+    'tinymce.plugins.paste.core.ProcessFilters',
+    'tinymce.plugins.paste.core.SmartPaste',
+    'tinymce.plugins.paste.core.Utils'
+  ],
+  function (RangeUtils, Env, Delay, Tools, VK, InternalHtml, Newlines, PasteBin, ProcessFilters, SmartPaste, Utils) {
+    return function (editor) {
+      var self = this, keyboardPasteTimeStamp = 0, draggingInternally = false;
+      var pasteBin = new PasteBin(editor);
+      var keyboardPastePlainTextState;
+      var mceInternalUrlPrefix = 'data:text/mce-internal,';
+      var uniqueId = Utils.createIdGenerator("mceclip");
+
+      /**
+       * Pastes the specified HTML. This means that the HTML is filtered and then
+       * inserted at the current selection in the editor. It will also fire paste events
+       * for custom user filtering.
+       *
+       * @param {String} html HTML code to paste into the current selection.
+       * @param {Boolean?} internalFlag Optional true/false flag if the contents is internal or external.
+       */
+      function pasteHtml(html, internalFlag) {
+        var internal = internalFlag ? internalFlag : InternalHtml.isMarked(html);
+        var args = ProcessFilters.process(editor, InternalHtml.unmark(html), internal);
+
+        if (args.cancelled === false) {
+          SmartPaste.insertContent(editor, args.content);
+        }
+      }
+
+      /**
+       * Pastes the specified text. This means that the plain text is processed
+       * and converted into BR and P elements. It will fire paste events for custom filtering.
+       *
+       * @param {String} text Text to paste as the current selection location.
+       */
+      function pasteText(text) {
+        text = editor.dom.encode(text).replace(/\r\n/g, '\n');
+        text = Newlines.convert(text, editor.settings.forced_root_block, editor.settings.forced_root_block_attrs);
+
+        pasteHtml(text, false);
+      }
+
+
+      /**
+       * Gets various content types out of a datatransfer object.
+       *
+       * @param {DataTransfer} dataTransfer Event fired on paste.
+       * @return {Object} Object with mime types and data for those mime types.
+       */
+      function getDataTransferItems(dataTransfer) {
+        var items = {};
+
+        if (dataTransfer) {
+          // Use old WebKit/IE API
+          if (dataTransfer.getData) {
+            var legacyText = dataTransfer.getData('Text');
+            if (legacyText && legacyText.length > 0) {
+              if (legacyText.indexOf(mceInternalUrlPrefix) == -1) {
+                items['text/plain'] = legacyText;
+              }
+            }
+          }
+
+          if (dataTransfer.types) {
+            for (var i = 0; i < dataTransfer.types.length; i++) {
+              var contentType = dataTransfer.types[i];
+              try { // IE11 throws exception when contentType is Files (type is present but data cannot be retrieved via getData())
+                items[contentType] = dataTransfer.getData(contentType);
+              } catch (ex) {
+                items[contentType] = ""; // useless in general, but for consistency across browsers
+              }
+            }
+          }
+        }
+
+        return items;
+      }
+
+      /**
+       * Gets various content types out of the Clipboard API. It will also get the
+       * plain text using older IE and WebKit API:s.
+       *
+       * @param {ClipboardEvent} clipboardEvent Event fired on paste.
+       * @return {Object} Object with mime types and data for those mime types.
+       */
+      function getClipboardContent(clipboardEvent) {
+        var content = getDataTransferItems(clipboardEvent.clipboardData || editor.getDoc().dataTransfer);
+
+        // Edge 15 has a broken HTML Clipboard API see https://developer.microsoft.com/en-us/microsoft-edge/platform/issues/11877517/
+        return Utils.isMsEdge() ? Tools.extend(content, { 'text/html': '' }) : content;
+      }
+
+      function hasHtmlOrText(content) {
+        return hasContentType(content, 'text/html') || hasContentType(content, 'text/plain');
+      }
+
+      function getBase64FromUri(uri) {
+        var idx;
+
+        idx = uri.indexOf(',');
+        if (idx !== -1) {
+          return uri.substr(idx + 1);
+        }
+
+        return null;
+      }
+
+      function isValidDataUriImage(settings, imgElm) {
+        return settings.images_dataimg_filter ? settings.images_dataimg_filter(imgElm) : true;
+      }
+
+      function extractFilename(str) {
+        var m = str.match(/([\s\S]+?)\.(?:jpeg|jpg|png|gif)$/i);
+        return m ? editor.dom.encode(m[1]) : null;
+      }
+
+      function pasteImage(rng, reader, blob) {
+        if (rng) {
+          editor.selection.setRng(rng);
+          rng = null;
+        }
+
+        var dataUri = reader.result;
+        var base64 = getBase64FromUri(dataUri);
+        var id = uniqueId();
+        var name = editor.settings.images_reuse_filename && blob.name ? extractFilename(blob.name) : id;
+        var img = new Image();
+
+        img.src = dataUri;
+
+        // TODO: Move the bulk of the cache logic to EditorUpload
+        if (isValidDataUriImage(editor.settings, img)) {
+          var blobCache = editor.editorUpload.blobCache;
+          var blobInfo, existingBlobInfo;
+
+          existingBlobInfo = blobCache.findFirst(function (cachedBlobInfo) {
+            return cachedBlobInfo.base64() === base64;
+          });
+
+          if (!existingBlobInfo) {
+            blobInfo = blobCache.create(id, blob, base64, name);
+            blobCache.add(blobInfo);
+          } else {
+            blobInfo = existingBlobInfo;
+          }
+
+          pasteHtml('<img src="' + blobInfo.blobUri() + '">', false);
+        } else {
+          pasteHtml('<img src="' + dataUri + '">', false);
+        }
+      }
+
+      /**
+       * Checks if the clipboard contains image data if it does it will take that data
+       * and convert it into a data url image and paste that image at the caret location.
+       *
+       * @param  {ClipboardEvent} e Paste/drop event object.
+       * @param  {DOMRange} rng Rng object to move selection to.
+       * @return {Boolean} true/false if the image data was found or not.
+       */
+      function pasteImageData(e, rng) {
+        var dataTransfer = e.clipboardData || e.dataTransfer;
+
+        function processItems(items) {
+          var i, item, reader, hadImage = false;
+
+          if (items) {
+            for (i = 0; i < items.length; i++) {
+              item = items[i];
+
+              if (/^image\/(jpeg|png|gif|bmp)$/.test(item.type)) {
+                var blob = item.getAsFile ? item.getAsFile() : item;
+
+                reader = new FileReader();
+                reader.onload = pasteImage.bind(null, rng, reader, blob);
+                reader.readAsDataURL(blob);
+
+                e.preventDefault();
+                hadImage = true;
+              }
+            }
+          }
+
+          return hadImage;
+        }
+
+        if (editor.settings.paste_data_images && dataTransfer) {
+          return processItems(dataTransfer.items) || processItems(dataTransfer.files);
+        }
+      }
+
+      /**
+       * Chrome on Android doesn't support proper clipboard access so we have no choice but to allow the browser default behavior.
+       *
+       * @param {Event} e Paste event object to check if it contains any data.
+       * @return {Boolean} true/false if the clipboard is empty or not.
+       */
+      function isBrokenAndroidClipboardEvent(e) {
+        var clipboardData = e.clipboardData;
+
+        return navigator.userAgent.indexOf('Android') != -1 && clipboardData && clipboardData.items && clipboardData.items.length === 0;
+      }
+
+      function getCaretRangeFromEvent(e) {
+        return RangeUtils.getCaretRangeFromPoint(e.clientX, e.clientY, editor.getDoc());
+      }
+
+      function hasContentType(clipboardContent, mimeType) {
+        return mimeType in clipboardContent && clipboardContent[mimeType].length > 0;
+      }
+
+      function isKeyboardPasteEvent(e) {
+        return (VK.metaKeyPressed(e) && e.keyCode == 86) || (e.shiftKey && e.keyCode == 45);
+      }
+
+      function registerEventHandlers() {
+        editor.on('keydown', function (e) {
+          function removePasteBinOnKeyUp(e) {
+            // Ctrl+V or Shift+Insert
+            if (isKeyboardPasteEvent(e) && !e.isDefaultPrevented()) {
+              pasteBin.remove();
+            }
+          }
+
+          // Ctrl+V or Shift+Insert
+          if (isKeyboardPasteEvent(e) && !e.isDefaultPrevented()) {
+            keyboardPastePlainTextState = e.shiftKey && e.keyCode == 86;
+
+            // Edge case on Safari on Mac where it doesn't handle Cmd+Shift+V correctly
+            // it fires the keydown but no paste or keyup so we are left with a paste bin
+            if (keyboardPastePlainTextState && Env.webkit && navigator.userAgent.indexOf('Version/') != -1) {
+              return;
+            }
+
+            // Prevent undoManager keydown handler from making an undo level with the pastebin in it
+            e.stopImmediatePropagation();
+
+            keyboardPasteTimeStamp = new Date().getTime();
+
+            // IE doesn't support Ctrl+Shift+V and it doesn't even produce a paste event
+            // so lets fake a paste event and let IE use the execCommand/dataTransfer methods
+            if (Env.ie && keyboardPastePlainTextState) {
+              e.preventDefault();
+              editor.fire('paste', { ieFake: true });
+              return;
+            }
+
+            pasteBin.remove();
+            pasteBin.create();
+
+            // Remove pastebin if we get a keyup and no paste event
+            // For example pasting a file in IE 11 will not produce a paste event
+            editor.once('keyup', removePasteBinOnKeyUp);
+            editor.once('paste', function () {
+              editor.off('keyup', removePasteBinOnKeyUp);
+            });
+          }
+        });
+
+        function insertClipboardContent(clipboardContent, isKeyBoardPaste, plainTextMode, internal) {
+          var content, isPlainTextHtml;
+
+          // Grab HTML from Clipboard API or paste bin as a fallback
+          if (hasContentType(clipboardContent, 'text/html')) {
+            content = clipboardContent['text/html'];
+          } else {
+            content = pasteBin.getHtml();
+            internal = internal ? internal : InternalHtml.isMarked(content);
+
+            // If paste bin is empty try using plain text mode
+            // since that is better than nothing right
+            if (pasteBin.isDefaultContent(content)) {
+              plainTextMode = true;
+            }
+          }
+
+          content = Utils.trimHtml(content);
+
+          pasteBin.remove();
+
+          isPlainTextHtml = (internal === false && Newlines.isPlainText(content));
+
+          // If we got nothing from clipboard API and pastebin or the content is a plain text (with only
+          // some BRs, Ps or DIVs as newlines) then we fallback to plain/text
+          if (!content.length || isPlainTextHtml) {
+            plainTextMode = true;
+          }
+
+          // Grab plain text from Clipboard API or convert existing HTML to plain text
+          if (plainTextMode) {
+            // Use plain text contents from Clipboard API unless the HTML contains paragraphs then
+            // we should convert the HTML to plain text since works better when pasting HTML/Word contents as plain text
+            if (hasContentType(clipboardContent, 'text/plain') && isPlainTextHtml) {
+              content = clipboardContent['text/plain'];
+            } else {
+              content = Utils.innerText(content);
+            }
+          }
+
+          // If the content is the paste bin default HTML then it was
+          // impossible to get the cliboard data out.
+          if (pasteBin.isDefaultContent(content)) {
+            if (!isKeyBoardPaste) {
+              editor.windowManager.alert('Please use Ctrl+V/Cmd+V keyboard shortcuts to paste contents.');
+            }
+
+            return;
+          }
+
+          if (plainTextMode) {
+            pasteText(content);
+          } else {
+            pasteHtml(content, internal);
+          }
+        }
+
+        var getLastRng = function () {
+          return pasteBin.getLastRng() || editor.selection.getRng();
+        };
+
+        editor.on('paste', function (e) {
+          // Getting content from the Clipboard can take some time
+          var clipboardTimer = new Date().getTime();
+          var clipboardContent = getClipboardContent(e);
+          var clipboardDelay = new Date().getTime() - clipboardTimer;
+
+          var isKeyBoardPaste = (new Date().getTime() - keyboardPasteTimeStamp - clipboardDelay) < 1000;
+          var plainTextMode = self.pasteFormat == "text" || keyboardPastePlainTextState;
+          var internal = hasContentType(clipboardContent, InternalHtml.internalHtmlMime());
+
+          keyboardPastePlainTextState = false;
+
+          if (e.isDefaultPrevented() || isBrokenAndroidClipboardEvent(e)) {
+            pasteBin.remove();
+            return;
+          }
+
+          if (!hasHtmlOrText(clipboardContent) && pasteImageData(e, getLastRng())) {
+            pasteBin.remove();
+            return;
+          }
+
+          // Not a keyboard paste prevent default paste and try to grab the clipboard contents using different APIs
+          if (!isKeyBoardPaste) {
+            e.preventDefault();
+          }
+
+          // Try IE only method if paste isn't a keyboard paste
+          if (Env.ie && (!isKeyBoardPaste || e.ieFake) && !hasContentType(clipboardContent, 'text/html')) {
+            pasteBin.create();
+
+            editor.dom.bind(pasteBin.getEl(), 'paste', function (e) {
+              e.stopPropagation();
+            });
+
+            editor.getDoc().execCommand('Paste', false, null);
+            clipboardContent["text/html"] = pasteBin.getHtml();
+          }
+
+          // If clipboard API has HTML then use that directly
+          if (hasContentType(clipboardContent, 'text/html')) {
+            e.preventDefault();
+
+            // if clipboard lacks internal mime type, inspect html for internal markings
+            if (!internal) {
+              internal = InternalHtml.isMarked(clipboardContent['text/html']);
+            }
+
+            insertClipboardContent(clipboardContent, isKeyBoardPaste, plainTextMode, internal);
+          } else {
+            Delay.setEditorTimeout(editor, function () {
+              insertClipboardContent(clipboardContent, isKeyBoardPaste, plainTextMode, internal);
+            }, 0);
+          }
+        });
+
+        editor.on('dragstart dragend', function (e) {
+          draggingInternally = e.type == 'dragstart';
+        });
+
+        function isPlainTextFileUrl(content) {
+          var plainTextContent = content['text/plain'];
+          return plainTextContent ? plainTextContent.indexOf('file://') === 0 : false;
+        }
+
+        editor.on('drop', function (e) {
+          var dropContent, rng;
+
+          rng = getCaretRangeFromEvent(e);
+
+          if (e.isDefaultPrevented() || draggingInternally) {
+            return;
+          }
+
+          dropContent = getDataTransferItems(e.dataTransfer);
+          var internal = hasContentType(dropContent, InternalHtml.internalHtmlMime());
+
+          if ((!hasHtmlOrText(dropContent) || isPlainTextFileUrl(dropContent)) && pasteImageData(e, rng)) {
+            return;
+          }
+
+          if (rng && editor.settings.paste_filter_drop !== false) {
+            var content = dropContent['mce-internal'] || dropContent['text/html'] || dropContent['text/plain'];
+
+            if (content) {
+              e.preventDefault();
+
+              // FF 45 doesn't paint a caret when dragging in text in due to focus call by execCommand
+              Delay.setEditorTimeout(editor, function () {
+                editor.undoManager.transact(function () {
+                  if (dropContent['mce-internal']) {
+                    editor.execCommand('Delete');
+                  }
+
+                  editor.selection.setRng(rng);
+
+                  content = Utils.trimHtml(content);
+
+                  if (!dropContent['text/html']) {
+                    pasteText(content);
+                  } else {
+                    pasteHtml(content, internal);
+                  }
+                });
+              });
+            }
+          }
+        });
+
+        editor.on('dragover dragend', function (e) {
+          if (editor.settings.paste_data_images) {
+            e.preventDefault();
+          }
+        });
+      }
+
+      self.pasteHtml = pasteHtml;
+      self.pasteText = pasteText;
+      self.pasteImageData = pasteImageData;
+
+      editor.on('preInit', function () {
+        registerEventHandlers();
+
+        // Remove all data images from paste for example from Gecko
+        // except internal images like video elements
+        editor.parser.addNodeFilter('img', function (nodes, name, args) {
+          function isPasteInsert(args) {
+            return args.data && args.data.paste === true;
+          }
+
+          function remove(node) {
+            if (!node.attr('data-mce-object') && src !== Env.transparentSrc) {
+              node.remove();
+            }
+          }
+
+          function isWebKitFakeUrl(src) {
+            return src.indexOf("webkit-fake-url") === 0;
+          }
+
+          function isDataUri(src) {
+            return src.indexOf("data:") === 0;
+          }
+
+          if (!editor.settings.paste_data_images && isPasteInsert(args)) {
+            var i = nodes.length;
+
+            while (i--) {
+              var src = nodes[i].attributes.map.src;
+
+              if (!src) {
+                continue;
+              }
+
+              // Safari on Mac produces webkit-fake-url see: https://bugs.webkit.org/show_bug.cgi?id=49141
+              if (isWebKitFakeUrl(src)) {
+                remove(nodes[i]);
+              } else if (!editor.settings.allow_html_data_urls && isDataUri(src)) {
+                remove(nodes[i]);
+              }
+            }
+          }
+        });
+      });
+    };
+  }
+);
+
+/**
+ * CutCopy.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.paste.core.CutCopy',
+  [
+    'tinymce.core.Env',
+    'tinymce.plugins.paste.core.InternalHtml',
+    'tinymce.plugins.paste.core.Utils'
+  ],
+  function (Env, InternalHtml, Utils) {
+    var noop = function () {
+    };
+
+    var hasWorkingClipboardApi = function (clipboardData) {
+      // iOS supports the clipboardData API but it doesn't do anything for cut operations
+      // Edge 15 has a broken HTML Clipboard API see https://developer.microsoft.com/en-us/microsoft-edge/platform/issues/11780845/
+      return Env.iOS === false && clipboardData !== undefined && typeof clipboardData.setData === 'function' && Utils.isMsEdge() !== true;
+    };
+
+    var setHtml5Clipboard = function (clipboardData, html, text) {
+      if (hasWorkingClipboardApi(clipboardData)) {
+        try {
+          clipboardData.clearData();
+          clipboardData.setData('text/html', html);
+          clipboardData.setData('text/plain', text);
+          clipboardData.setData(InternalHtml.internalHtmlMime(), html);
+          return true;
+        } catch (e) {
+          return false;
+        }
+      } else {
+        return false;
+      }
+    };
+
+    var setClipboardData = function (evt, data, fallback, done) {
+      if (setHtml5Clipboard(evt.clipboardData, data.html, data.text)) {
+        evt.preventDefault();
+        done();
+      } else {
+        fallback(data.html, done);
+      }
+    };
+
+    var fallback = function (editor) {
+      return function (html, done) {
+        var markedHtml = InternalHtml.mark(html);
+        var outer = editor.dom.create('div', {
+          contenteditable: "false",
+          "data-mce-bogus": "all"
+        });
+        var inner = editor.dom.create('div', { contenteditable: "true" }, markedHtml);
+        editor.dom.setStyles(outer, {
+          position: 'fixed',
+          left: '-3000px',
+          width: '1000px',
+          overflow: 'hidden'
+        });
+        outer.appendChild(inner);
+        editor.dom.add(editor.getBody(), outer);
+
+        var range = editor.selection.getRng();
+        inner.focus();
+
+        var offscreenRange = editor.dom.createRng();
+        offscreenRange.selectNodeContents(inner);
+        editor.selection.setRng(offscreenRange);
+
+        setTimeout(function () {
+          outer.parentNode.removeChild(outer);
+          editor.selection.setRng(range);
+          done();
+        }, 0);
+      };
+    };
+
+    var getData = function (editor) {
+      return {
+        html: editor.selection.getContent({ contextual: true }),
+        text: editor.selection.getContent({ format: 'text' })
+      };
+    };
+
+    var cut = function (editor) {
+      return function (evt) {
+        if (editor.selection.isCollapsed() === false) {
+          setClipboardData(evt, getData(editor), fallback(editor), function () {
+            // Chrome fails to execCommand from another execCommand with this message:
+            // "We don't execute document.execCommand() this time, because it is called recursively.""
+            setTimeout(function () { // detach
+              editor.execCommand('Delete');
+            }, 0);
+          });
+        }
+      };
+    };
+
+    var copy = function (editor) {
+      return function (evt) {
+        if (editor.selection.isCollapsed() === false) {
+          setClipboardData(evt, getData(editor), fallback(editor), noop);
+        }
+      };
+    };
+
+    var register = function (editor) {
+      editor.on('cut', cut(editor));
+      editor.on('copy', copy(editor));
+    };
+
+    return {
+      register: register
+    };
+  }
+);
+/**
+ * Quirks.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+/**
+ * This class contains various fixes for browsers. These issues can not be feature
+ * detected since we have no direct control over the clipboard. However we might be able
+ * to remove some of these fixes once the browsers gets updated/fixed.
+ *
+ * @class tinymce.pasteplugin.Quirks
+ * @private
+ */
+define(
+  'tinymce.plugins.paste.core.Quirks',
+  [
+    'tinymce.core.Env',
+    'tinymce.core.util.Tools',
+    'tinymce.plugins.paste.core.WordFilter',
+    'tinymce.plugins.paste.core.Utils'
+  ],
+  function (Env, Tools, WordFilter, Utils) {
+    function addPreProcessFilter(editor, filterFunc) {
+      editor.on('PastePreProcess', function (e) {
+        e.content = filterFunc(editor, e.content, e.internal, e.wordContent);
+      });
+    }
+
+    function addPostProcessFilter(editor, filterFunc) {
+      editor.on('PastePostProcess', function (e) {
+        filterFunc(editor, e.node);
+      });
+    }
+
+    /**
+     * Removes BR elements after block elements. IE9 has a nasty bug where it puts a BR element after each
+     * block element when pasting from word. This removes those elements.
+     *
+     * This:
+     *  <p>a</p><br><p>b</p>
+     *
+     * Becomes:
+     *  <p>a</p><p>b</p>
+     */
+    function removeExplorerBrElementsAfterBlocks(editor, html) {
+      // Only filter word specific content
+      if (!WordFilter.isWordContent(html)) {
+        return html;
+      }
+
+      // Produce block regexp based on the block elements in schema
+      var blockElements = [];
+
+      Tools.each(editor.schema.getBlockElements(), function (block, blockName) {
+        blockElements.push(blockName);
+      });
+
+      var explorerBlocksRegExp = new RegExp(
+        '(?:<br>&nbsp;[\\s\\r\\n]+|<br>)*(<\\/?(' + blockElements.join('|') + ')[^>]*>)(?:<br>&nbsp;[\\s\\r\\n]+|<br>)*',
+        'g'
+      );
+
+      // Remove BR:s from: <BLOCK>X</BLOCK><BR>
+      html = Utils.filter(html, [
+        [explorerBlocksRegExp, '$1']
+      ]);
+
+      // IE9 also adds an extra BR element for each soft-linefeed and it also adds a BR for each word wrap break
+      html = Utils.filter(html, [
+        [/<br><br>/g, '<BR><BR>'], // Replace multiple BR elements with uppercase BR to keep them intact
+        [/<br>/g, ' '],            // Replace single br elements with space since they are word wrap BR:s
+        [/<BR><BR>/g, '<br>']      // Replace back the double brs but into a single BR
+      ]);
+
+      return html;
+    }
+
+    /**
+     * WebKit has a nasty bug where the all computed styles gets added to style attributes when copy/pasting contents.
+     * This fix solves that by simply removing the whole style attribute.
+     *
+     * The paste_webkit_styles option can be set to specify what to keep:
+     *  paste_webkit_styles: "none" // Keep no styles
+     *  paste_webkit_styles: "all", // Keep all of them
+     *  paste_webkit_styles: "font-weight color" // Keep specific ones
+     */
+    function removeWebKitStyles(editor, content, internal, isWordHtml) {
+      // WordFilter has already processed styles at this point and internal doesn't need any processing
+      if (isWordHtml || internal) {
+        return content;
+      }
+
+      // Filter away styles that isn't matching the target node
+      var webKitStyles = editor.settings.paste_webkit_styles;
+
+      if (editor.settings.paste_remove_styles_if_webkit === false || webKitStyles == "all") {
+        return content;
+      }
+
+      if (webKitStyles) {
+        webKitStyles = webKitStyles.split(/[, ]/);
+      }
+
+      // Keep specific styles that doesn't match the current node computed style
+      if (webKitStyles) {
+        var dom = editor.dom, node = editor.selection.getNode();
+
+        content = content.replace(/(<[^>]+) style="([^"]*)"([^>]*>)/gi, function (all, before, value, after) {
+          var inputStyles = dom.parseStyle(dom.decode(value), 'span');
+          var outputStyles = {};
+
+          if (webKitStyles === "none") {
+            return before + after;
+          }
+
+          for (var i = 0; i < webKitStyles.length; i++) {
+            var inputValue = inputStyles[webKitStyles[i]], currentValue = dom.getStyle(node, webKitStyles[i], true);
+
+            if (/color/.test(webKitStyles[i])) {
+              inputValue = dom.toHex(inputValue);
+              currentValue = dom.toHex(currentValue);
+            }
+
+            if (currentValue != inputValue) {
+              outputStyles[webKitStyles[i]] = inputValue;
+            }
+          }
+
+          outputStyles = dom.serializeStyle(outputStyles, 'span');
+          if (outputStyles) {
+            return before + ' style="' + outputStyles + '"' + after;
+          }
+
+          return before + after;
+        });
+      } else {
+        // Remove all external styles
+        content = content.replace(/(<[^>]+) style="([^"]*)"([^>]*>)/gi, '$1$3');
+      }
+
+      // Keep internal styles
+      content = content.replace(/(<[^>]+) data-mce-style="([^"]+)"([^>]*>)/gi, function (all, before, value, after) {
+        return before + ' style="' + value + '"' + after;
+      });
+
+      return content;
+    }
+
+    function removeUnderlineAndFontInAnchor(editor, root) {
+      editor.$('a', root).find('font,u').each(function (i, node) {
+        editor.dom.remove(node, true);
+      });
+    }
+
+    var setup = function (editor) {
+      if (Env.webkit) {
+        addPreProcessFilter(editor, removeWebKitStyles);
+      }
+
+      if (Env.ie) {
+        addPreProcessFilter(editor, removeExplorerBrElementsAfterBlocks);
+        addPostProcessFilter(editor, removeUnderlineAndFontInAnchor);
+      }
+    };
+
+    return {
+      setup: setup
+    };
+  }
+);
+/**
+ * Plugin.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+/**
+ * This class contains all core logic for the paste plugin.
+ *
+ * @class tinymce.paste.Plugin
+ * @private
+ */
+define(
+  'tinymce.plugins.paste.Plugin',
+  [
+    'tinymce.core.PluginManager',
+    'tinymce.plugins.paste.api.Events',
+    'tinymce.plugins.paste.core.Clipboard',
+    'tinymce.plugins.paste.core.CutCopy',
+    'tinymce.plugins.paste.core.Quirks'
+  ],
+  function (PluginManager, Events, Clipboard, CutCopy, Quirks) {
+    var userIsInformed;
+
+    PluginManager.add('paste', function (editor) {
+      var self = this, clipboard, settings = editor.settings;
+
+      function isUserInformedAboutPlainText() {
+        return userIsInformed || editor.settings.paste_plaintext_inform === false;
+      }
+
+      function togglePlainTextPaste() {
+        if (clipboard.pasteFormat == "text") {
+          clipboard.pasteFormat = "html";
+          Events.firePastePlainTextToggle(editor, false);
+        } else {
+          clipboard.pasteFormat = "text";
+          Events.firePastePlainTextToggle(editor, true);
+
+          if (!isUserInformedAboutPlainText()) {
+            var message = editor.translate('Paste is now in plain text mode. Contents will now ' +
+              'be pasted as plain text until you toggle this option off.');
+
+            editor.notificationManager.open({
+              text: message,
+              type: 'info'
+            });
+
+            userIsInformed = true;
+          }
+        }
+
+        editor.focus();
+      }
+
+      function stateChange() {
+        var self = this;
+
+        self.active(clipboard.pasteFormat === 'text');
+
+        editor.on('PastePlainTextToggle', function (e) {
+          self.active(e.state);
+        });
+      }
+
+      // draw back if power version is requested and registered
+      if (/(^|[ ,])powerpaste([, ]|$)/.test(settings.plugins) && PluginManager.get('powerpaste')) {
+        /*eslint no-console:0 */
+        if (typeof console !== "undefined" && console.log) {
+          console.log("PowerPaste is incompatible with Paste plugin! Remove 'paste' from the 'plugins' option.");
+        }
+        return;
+      }
+
+      self.clipboard = clipboard = new Clipboard(editor);
+      self.quirks = Quirks.setup(editor);
+
+      if (editor.settings.paste_as_text) {
+        self.clipboard.pasteFormat = "text";
+      }
+
+      if (settings.paste_preprocess) {
+        editor.on('PastePreProcess', function (e) {
+          settings.paste_preprocess.call(self, self, e);
+        });
+      }
+
+      if (settings.paste_postprocess) {
+        editor.on('PastePostProcess', function (e) {
+          settings.paste_postprocess.call(self, self, e);
+        });
+      }
+
+      editor.addCommand('mceInsertClipboardContent', function (ui, value) {
+        if (value.content) {
+          self.clipboard.pasteHtml(value.content, value.internal);
+        }
+
+        if (value.text) {
+          self.clipboard.pasteText(value.text);
+        }
+      });
+
+      // Block all drag/drop events
+      if (editor.settings.paste_block_drop) {
+        editor.on('dragend dragover draggesture dragdrop drop drag', function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        });
+      }
+
+      // Prevent users from dropping data images on Gecko
+      if (!editor.settings.paste_data_images) {
+        editor.on('drop', function (e) {
+          var dataTransfer = e.dataTransfer;
+
+          if (dataTransfer && dataTransfer.files && dataTransfer.files.length > 0) {
+            e.preventDefault();
+          }
+        });
+      }
+
+      editor.addCommand('mceTogglePlainTextPaste', togglePlainTextPaste);
+
+      editor.addButton('pastetext', {
+        icon: 'pastetext',
+        tooltip: 'Paste as text',
+        onclick: togglePlainTextPaste,
+        onPostRender: stateChange
+      });
+
+      editor.addMenuItem('pastetext', {
+        text: 'Paste as text',
+        selectable: true,
+        active: clipboard.pasteFormat,
+        onclick: togglePlainTextPaste,
+        onPostRender: stateChange
+      });
+
+      CutCopy.register(editor);
+    });
+
+    return function () { };
+  }
+);
+dem('tinymce.plugins.paste.Plugin')();
+})();
+(function () {
+
+var defs = {}; // id -> {dependencies, definition, instance (possibly undefined)}
+
+// Used when there is no 'main' module.
+// The name is probably (hopefully) unique so minification removes for releases.
+var register_3795 = function (id) {
+  var module = dem(id);
+  var fragments = id.split('.');
+  var target = Function('return this;')();
+  for (var i = 0; i < fragments.length - 1; ++i) {
+    if (target[fragments[i]] === undefined)
+      target[fragments[i]] = {};
+    target = target[fragments[i]];
+  }
+  target[fragments[fragments.length - 1]] = module;
+};
+
+var instantiate = function (id) {
+  var actual = defs[id];
+  var dependencies = actual.deps;
+  var definition = actual.defn;
+  var len = dependencies.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances[i] = dem(dependencies[i]);
+  var defResult = definition.apply(null, instances);
+  if (defResult === undefined)
+     throw 'module [' + id + '] returned undefined';
+  actual.instance = defResult;
+};
+
+var def = function (id, dependencies, definition) {
+  if (typeof id !== 'string')
+    throw 'module id must be a string';
+  else if (dependencies === undefined)
+    throw 'no dependencies for ' + id;
+  else if (definition === undefined)
+    throw 'no definition function for ' + id;
+  defs[id] = {
+    deps: dependencies,
+    defn: definition,
+    instance: undefined
+  };
+};
+
+var dem = function (id) {
+  var actual = defs[id];
+  if (actual === undefined)
+    throw 'module [' + id + '] was undefined';
+  else if (actual.instance === undefined)
+    instantiate(id);
+  return actual.instance;
+};
+
+var req = function (ids, callback) {
+  var len = ids.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances.push(dem(ids[i]));
+  callback.apply(null, callback);
+};
+
+var ephox = {};
+
+ephox.bolt = {
+  module: {
+    api: {
+      define: def,
+      require: req,
+      demand: dem
+    }
+  }
+};
+
+var define = def;
+var require = req;
+var demand = dem;
+// this helps with minificiation when using a lot of global references
+var defineGlobal = function (id, ref) {
+  define(id, [], function () { return ref; });
+};
+/*jsc
+["tinymce.plugins.charmap.Plugin","tinymce.core.PluginManager","tinymce.core.util.Tools","global!tinymce.util.Tools.resolve"]
+jsc*/
+defineGlobal("global!tinymce.util.Tools.resolve", tinymce.util.Tools.resolve);
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.PluginManager',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.PluginManager');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.util.Tools',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.util.Tools');
+  }
+);
+
+/**
+ * Plugin.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+/**
+ * This class contains all core logic for the charmap plugin.
+ *
+ * @class tinymce.charmap.Plugin
+ * @private
+ */
+define(
+  'tinymce.plugins.charmap.Plugin',
+  [
+    'tinymce.core.PluginManager',
+    'tinymce.core.util.Tools'
+  ],
+  function (PluginManager, Tools) {
+    PluginManager.add('charmap', function (editor) {
+      var isArray = Tools.isArray;
+
+      function getDefaultCharMap() {
+        return [
+          ['160', 'no-break space'],
+          ['173', 'soft hyphen'],
+          ['34', 'quotation mark'],
+          // finance
+          ['162', 'cent sign'],
+          ['8364', 'euro sign'],
+          ['163', 'pound sign'],
+          ['165', 'yen sign'],
+          // signs
+          ['169', 'copyright sign'],
+          ['174', 'registered sign'],
+          ['8482', 'trade mark sign'],
+          ['8240', 'per mille sign'],
+          ['181', 'micro sign'],
+          ['183', 'middle dot'],
+          ['8226', 'bullet'],
+          ['8230', 'three dot leader'],
+          ['8242', 'minutes / feet'],
+          ['8243', 'seconds / inches'],
+          ['167', 'section sign'],
+          ['182', 'paragraph sign'],
+          ['223', 'sharp s / ess-zed'],
+          // quotations
+          ['8249', 'single left-pointing angle quotation mark'],
+          ['8250', 'single right-pointing angle quotation mark'],
+          ['171', 'left pointing guillemet'],
+          ['187', 'right pointing guillemet'],
+          ['8216', 'left single quotation mark'],
+          ['8217', 'right single quotation mark'],
+          ['8220', 'left double quotation mark'],
+          ['8221', 'right double quotation mark'],
+          ['8218', 'single low-9 quotation mark'],
+          ['8222', 'double low-9 quotation mark'],
+          ['60', 'less-than sign'],
+          ['62', 'greater-than sign'],
+          ['8804', 'less-than or equal to'],
+          ['8805', 'greater-than or equal to'],
+          ['8211', 'en dash'],
+          ['8212', 'em dash'],
+          ['175', 'macron'],
+          ['8254', 'overline'],
+          ['164', 'currency sign'],
+          ['166', 'broken bar'],
+          ['168', 'diaeresis'],
+          ['161', 'inverted exclamation mark'],
+          ['191', 'turned question mark'],
+          ['710', 'circumflex accent'],
+          ['732', 'small tilde'],
+          ['176', 'degree sign'],
+          ['8722', 'minus sign'],
+          ['177', 'plus-minus sign'],
+          ['247', 'division sign'],
+          ['8260', 'fraction slash'],
+          ['215', 'multiplication sign'],
+          ['185', 'superscript one'],
+          ['178', 'superscript two'],
+          ['179', 'superscript three'],
+          ['188', 'fraction one quarter'],
+          ['189', 'fraction one half'],
+          ['190', 'fraction three quarters'],
+          // math / logical
+          ['402', 'function / florin'],
+          ['8747', 'integral'],
+          ['8721', 'n-ary sumation'],
+          ['8734', 'infinity'],
+          ['8730', 'square root'],
+          ['8764', 'similar to'],
+          ['8773', 'approximately equal to'],
+          ['8776', 'almost equal to'],
+          ['8800', 'not equal to'],
+          ['8801', 'identical to'],
+          ['8712', 'element of'],
+          ['8713', 'not an element of'],
+          ['8715', 'contains as member'],
+          ['8719', 'n-ary product'],
+          ['8743', 'logical and'],
+          ['8744', 'logical or'],
+          ['172', 'not sign'],
+          ['8745', 'intersection'],
+          ['8746', 'union'],
+          ['8706', 'partial differential'],
+          ['8704', 'for all'],
+          ['8707', 'there exists'],
+          ['8709', 'diameter'],
+          ['8711', 'backward difference'],
+          ['8727', 'asterisk operator'],
+          ['8733', 'proportional to'],
+          ['8736', 'angle'],
+          // undefined
+          ['180', 'acute accent'],
+          ['184', 'cedilla'],
+          ['170', 'feminine ordinal indicator'],
+          ['186', 'masculine ordinal indicator'],
+          ['8224', 'dagger'],
+          ['8225', 'double dagger'],
+          // alphabetical special chars
+          ['192', 'A - grave'],
+          ['193', 'A - acute'],
+          ['194', 'A - circumflex'],
+          ['195', 'A - tilde'],
+          ['196', 'A - diaeresis'],
+          ['197', 'A - ring above'],
+          ['256', 'A - macron'],
+          ['198', 'ligature AE'],
+          ['199', 'C - cedilla'],
+          ['200', 'E - grave'],
+          ['201', 'E - acute'],
+          ['202', 'E - circumflex'],
+          ['203', 'E - diaeresis'],
+          ['274', 'E - macron'],
+          ['204', 'I - grave'],
+          ['205', 'I - acute'],
+          ['206', 'I - circumflex'],
+          ['207', 'I - diaeresis'],
+          ['298', 'I - macron'],
+          ['208', 'ETH'],
+          ['209', 'N - tilde'],
+          ['210', 'O - grave'],
+          ['211', 'O - acute'],
+          ['212', 'O - circumflex'],
+          ['213', 'O - tilde'],
+          ['214', 'O - diaeresis'],
+          ['216', 'O - slash'],
+          ['332', 'O - macron'],
+          ['338', 'ligature OE'],
+          ['352', 'S - caron'],
+          ['217', 'U - grave'],
+          ['218', 'U - acute'],
+          ['219', 'U - circumflex'],
+          ['220', 'U - diaeresis'],
+          ['362', 'U - macron'],
+          ['221', 'Y - acute'],
+          ['376', 'Y - diaeresis'],
+          ['562', 'Y - macron'],
+          ['222', 'THORN'],
+          ['224', 'a - grave'],
+          ['225', 'a - acute'],
+          ['226', 'a - circumflex'],
+          ['227', 'a - tilde'],
+          ['228', 'a - diaeresis'],
+          ['229', 'a - ring above'],
+          ['257', 'a - macron'],
+          ['230', 'ligature ae'],
+          ['231', 'c - cedilla'],
+          ['232', 'e - grave'],
+          ['233', 'e - acute'],
+          ['234', 'e - circumflex'],
+          ['235', 'e - diaeresis'],
+          ['275', 'e - macron'],
+          ['236', 'i - grave'],
+          ['237', 'i - acute'],
+          ['238', 'i - circumflex'],
+          ['239', 'i - diaeresis'],
+          ['299', 'i - macron'],
+          ['240', 'eth'],
+          ['241', 'n - tilde'],
+          ['242', 'o - grave'],
+          ['243', 'o - acute'],
+          ['244', 'o - circumflex'],
+          ['245', 'o - tilde'],
+          ['246', 'o - diaeresis'],
+          ['248', 'o slash'],
+          ['333', 'o macron'],
+          ['339', 'ligature oe'],
+          ['353', 's - caron'],
+          ['249', 'u - grave'],
+          ['250', 'u - acute'],
+          ['251', 'u - circumflex'],
+          ['252', 'u - diaeresis'],
+          ['363', 'u - macron'],
+          ['253', 'y - acute'],
+          ['254', 'thorn'],
+          ['255', 'y - diaeresis'],
+          ['563', 'y - macron'],
+          ['913', 'Alpha'],
+          ['914', 'Beta'],
+          ['915', 'Gamma'],
+          ['916', 'Delta'],
+          ['917', 'Epsilon'],
+          ['918', 'Zeta'],
+          ['919', 'Eta'],
+          ['920', 'Theta'],
+          ['921', 'Iota'],
+          ['922', 'Kappa'],
+          ['923', 'Lambda'],
+          ['924', 'Mu'],
+          ['925', 'Nu'],
+          ['926', 'Xi'],
+          ['927', 'Omicron'],
+          ['928', 'Pi'],
+          ['929', 'Rho'],
+          ['931', 'Sigma'],
+          ['932', 'Tau'],
+          ['933', 'Upsilon'],
+          ['934', 'Phi'],
+          ['935', 'Chi'],
+          ['936', 'Psi'],
+          ['937', 'Omega'],
+          ['945', 'alpha'],
+          ['946', 'beta'],
+          ['947', 'gamma'],
+          ['948', 'delta'],
+          ['949', 'epsilon'],
+          ['950', 'zeta'],
+          ['951', 'eta'],
+          ['952', 'theta'],
+          ['953', 'iota'],
+          ['954', 'kappa'],
+          ['955', 'lambda'],
+          ['956', 'mu'],
+          ['957', 'nu'],
+          ['958', 'xi'],
+          ['959', 'omicron'],
+          ['960', 'pi'],
+          ['961', 'rho'],
+          ['962', 'final sigma'],
+          ['963', 'sigma'],
+          ['964', 'tau'],
+          ['965', 'upsilon'],
+          ['966', 'phi'],
+          ['967', 'chi'],
+          ['968', 'psi'],
+          ['969', 'omega'],
+          // symbols
+          ['8501', 'alef symbol'],
+          ['982', 'pi symbol'],
+          ['8476', 'real part symbol'],
+          ['978', 'upsilon - hook symbol'],
+          ['8472', 'Weierstrass p'],
+          ['8465', 'imaginary part'],
+          // arrows
+          ['8592', 'leftwards arrow'],
+          ['8593', 'upwards arrow'],
+          ['8594', 'rightwards arrow'],
+          ['8595', 'downwards arrow'],
+          ['8596', 'left right arrow'],
+          ['8629', 'carriage return'],
+          ['8656', 'leftwards double arrow'],
+          ['8657', 'upwards double arrow'],
+          ['8658', 'rightwards double arrow'],
+          ['8659', 'downwards double arrow'],
+          ['8660', 'left right double arrow'],
+          ['8756', 'therefore'],
+          ['8834', 'subset of'],
+          ['8835', 'superset of'],
+          ['8836', 'not a subset of'],
+          ['8838', 'subset of or equal to'],
+          ['8839', 'superset of or equal to'],
+          ['8853', 'circled plus'],
+          ['8855', 'circled times'],
+          ['8869', 'perpendicular'],
+          ['8901', 'dot operator'],
+          ['8968', 'left ceiling'],
+          ['8969', 'right ceiling'],
+          ['8970', 'left floor'],
+          ['8971', 'right floor'],
+          ['9001', 'left-pointing angle bracket'],
+          ['9002', 'right-pointing angle bracket'],
+          ['9674', 'lozenge'],
+          ['9824', 'black spade suit'],
+          ['9827', 'black club suit'],
+          ['9829', 'black heart suit'],
+          ['9830', 'black diamond suit'],
+          ['8194', 'en space'],
+          ['8195', 'em space'],
+          ['8201', 'thin space'],
+          ['8204', 'zero width non-joiner'],
+          ['8205', 'zero width joiner'],
+          ['8206', 'left-to-right mark'],
+          ['8207', 'right-to-left mark']
+        ];
+      }
+
+      function charmapFilter(charmap) {
+        return Tools.grep(charmap, function (item) {
+          return isArray(item) && item.length == 2;
+        });
+      }
+
+      function getCharsFromSetting(settingValue) {
+        if (isArray(settingValue)) {
+          return [].concat(charmapFilter(settingValue));
+        }
+
+        if (typeof settingValue == "function") {
+          return settingValue();
+        }
+
+        return [];
+      }
+
+      function extendCharMap(charmap) {
+        var settings = editor.settings;
+
+        if (settings.charmap) {
+          charmap = getCharsFromSetting(settings.charmap);
+        }
+
+        if (settings.charmap_append) {
+          return [].concat(charmap).concat(getCharsFromSetting(settings.charmap_append));
+        }
+
+        return charmap;
+      }
+
+      function getCharMap() {
+        return extendCharMap(getDefaultCharMap());
+      }
+
+      function insertChar(chr) {
+        editor.fire('insertCustomChar', { chr: chr }).chr;
+        editor.execCommand('mceInsertContent', false, chr);
+      }
+
+      function showDialog() {
+        var gridHtml, x, y, win;
+
+        function getParentTd(elm) {
+          while (elm) {
+            if (elm.nodeName == 'TD') {
+              return elm;
+            }
+
+            elm = elm.parentNode;
+          }
+        }
+
+        gridHtml = '<table role="presentation" cellspacing="0" class="mce-charmap"><tbody>';
+
+        var charmap = getCharMap();
+        var width = Math.min(charmap.length, 25);
+        var height = Math.ceil(charmap.length / width);
+        for (y = 0; y < height; y++) {
+          gridHtml += '<tr>';
+
+          for (x = 0; x < width; x++) {
+            var index = y * width + x;
+            if (index < charmap.length) {
+              var chr = charmap[index];
+              var chrText = chr ? String.fromCharCode(parseInt(chr[0], 10)) : '&nbsp;';
+
+              gridHtml += (
+                '<td title="' + chr[1] + '">' +
+                '<div tabindex="-1" title="' + chr[1] + '" role="button" data-chr="' + chrText + '">' +
+                chrText +
+                '</div>' +
+                '</td>'
+              );
+            } else {
+              gridHtml += '<td />';
+            }
+          }
+
+          gridHtml += '</tr>';
+        }
+
+        gridHtml += '</tbody></table>';
+
+        var charMapPanel = {
+          type: 'container',
+          html: gridHtml,
+          onclick: function (e) {
+            var target = e.target;
+
+            if (/^(TD|DIV)$/.test(target.nodeName)) {
+              var charDiv = getParentTd(target).firstChild;
+              if (charDiv && charDiv.hasAttribute('data-chr')) {
+                insertChar(charDiv.getAttribute('data-chr'));
+
+                if (!e.ctrlKey) {
+                  win.close();
+                }
+              }
+            }
+          },
+          onmouseover: function (e) {
+            var td = getParentTd(e.target);
+
+            if (td && td.firstChild) {
+              win.find('#preview').text(td.firstChild.firstChild.data);
+              win.find('#previewTitle').text(td.title);
+            } else {
+              win.find('#preview').text(' ');
+              win.find('#previewTitle').text(' ');
+            }
+          }
+        };
+
+        win = editor.windowManager.open({
+          title: "Special character",
+          spacing: 10,
+          padding: 10,
+          items: [
+            charMapPanel,
+            {
+              type: 'container',
+              layout: 'flex',
+              direction: 'column',
+              align: 'center',
+              spacing: 5,
+              minWidth: 160,
+              minHeight: 160,
+              items: [
+                {
+                  type: 'label',
+                  name: 'preview',
+                  text: ' ',
+                  style: 'font-size: 40px; text-align: center',
+                  border: 1,
+                  minWidth: 140,
+                  minHeight: 80
+                },
+                {
+                  type: 'spacer',
+                  minHeight: 20
+                },
+                {
+                  type: 'label',
+                  name: 'previewTitle',
+                  text: ' ',
+                  style: 'white-space: pre-wrap;',
+                  border: 1,
+                  minWidth: 140
+                }
+              ]
+            }
+          ],
+          buttons: [
+            {
+              text: "Close", onclick: function () {
+                win.close();
+              }
+            }
+          ]
+        });
+      }
+
+      editor.addCommand('mceShowCharmap', showDialog);
+
+      editor.addButton('charmap', {
+        icon: 'charmap',
+        tooltip: 'Special character',
+        cmd: 'mceShowCharmap'
+      });
+
+      editor.addMenuItem('charmap', {
+        icon: 'charmap',
+        text: 'Special character',
+        cmd: 'mceShowCharmap',
+        context: 'insert'
+      });
+
+      return {
+        getCharMap: getCharMap,
+        insertChar: insertChar
+      };
+    });
+
+    return function () { };
+  }
+);
+dem('tinymce.plugins.charmap.Plugin')();
+})();
+(function () {
+
+var defs = {}; // id -> {dependencies, definition, instance (possibly undefined)}
+
+// Used when there is no 'main' module.
+// The name is probably (hopefully) unique so minification removes for releases.
+var register_3795 = function (id) {
+  var module = dem(id);
+  var fragments = id.split('.');
+  var target = Function('return this;')();
+  for (var i = 0; i < fragments.length - 1; ++i) {
+    if (target[fragments[i]] === undefined)
+      target[fragments[i]] = {};
+    target = target[fragments[i]];
+  }
+  target[fragments[fragments.length - 1]] = module;
+};
+
+var instantiate = function (id) {
+  var actual = defs[id];
+  var dependencies = actual.deps;
+  var definition = actual.defn;
+  var len = dependencies.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances[i] = dem(dependencies[i]);
+  var defResult = definition.apply(null, instances);
+  if (defResult === undefined)
+     throw 'module [' + id + '] returned undefined';
+  actual.instance = defResult;
+};
+
+var def = function (id, dependencies, definition) {
+  if (typeof id !== 'string')
+    throw 'module id must be a string';
+  else if (dependencies === undefined)
+    throw 'no dependencies for ' + id;
+  else if (definition === undefined)
+    throw 'no definition function for ' + id;
+  defs[id] = {
+    deps: dependencies,
+    defn: definition,
+    instance: undefined
+  };
+};
+
+var dem = function (id) {
+  var actual = defs[id];
+  if (actual === undefined)
+    throw 'module [' + id + '] was undefined';
+  else if (actual.instance === undefined)
+    instantiate(id);
+  return actual.instance;
+};
+
+var req = function (ids, callback) {
+  var len = ids.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances.push(dem(ids[i]));
+  callback.apply(null, callback);
+};
+
+var ephox = {};
+
+ephox.bolt = {
+  module: {
+    api: {
+      define: def,
+      require: req,
+      demand: dem
+    }
+  }
+};
+
+var define = def;
+var require = req;
+var demand = dem;
+// this helps with minificiation when using a lot of global references
+var defineGlobal = function (id, ref) {
+  define(id, [], function () { return ref; });
+};
+/*jsc
+["tinymce.plugins.emoticons.Plugin","tinymce.core.PluginManager","tinymce.core.util.Tools","global!tinymce.util.Tools.resolve"]
+jsc*/
+defineGlobal("global!tinymce.util.Tools.resolve", tinymce.util.Tools.resolve);
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.PluginManager',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.PluginManager');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.util.Tools',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.util.Tools');
+  }
+);
+
+/**
+ * Plugin.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+/**
+ * This class contains all core logic for the emoticons plugin.
+ *
+ * @class tinymce.emoticons.Plugin
+ * @private
+ */
+define(
+  'tinymce.plugins.emoticons.Plugin',
+  [
+    'tinymce.core.PluginManager',
+    'tinymce.core.util.Tools'
+  ],
+  function (PluginManager, Tools) {
+    PluginManager.add('emoticons', function (editor, url) {
+      var emoticons = [
+        ["cool", "cry", "embarassed", "foot-in-mouth"],
+        ["frown", "innocent", "kiss", "laughing"],
+        ["money-mouth", "sealed", "smile", "surprised"],
+        ["tongue-out", "undecided", "wink", "yell"]
+      ];
+
+      function getHtml() {
+        var emoticonsHtml;
+
+        emoticonsHtml = '<table role="list" class="mce-grid">';
+
+        Tools.each(emoticons, function (row) {
+          emoticonsHtml += '<tr>';
+
+          Tools.each(row, function (icon) {
+            var emoticonUrl = url + '/img/smiley-' + icon + '.gif';
+
+            emoticonsHtml += '<td><a href="#" data-mce-url="' + emoticonUrl + '" data-mce-alt="' + icon + '" tabindex="-1" ' +
+              'role="option" aria-label="' + icon + '"><img src="' +
+              emoticonUrl + '" style="width: 18px; height: 18px" role="presentation" /></a></td>';
+          });
+
+          emoticonsHtml += '</tr>';
+        });
+
+        emoticonsHtml += '</table>';
+
+        return emoticonsHtml;
+      }
+
+      editor.addButton('emoticons', {
+        type: 'panelbutton',
+        panel: {
+          role: 'application',
+          autohide: true,
+          html: getHtml,
+          onclick: function (e) {
+            var linkElm = editor.dom.getParent(e.target, 'a');
+
+            if (linkElm) {
+              editor.insertContent(
+                '<img src="' +
+                linkElm.getAttribute('data-mce-url') +
+                '" alt="' + linkElm.getAttribute('data-mce-alt') +
+                '" />'
+              );
+
+              this.hide();
+            }
+          }
+        },
+        tooltip: 'Emoticons'
+      });
+    });
+
+    return function () { };
+  }
+);
+dem('tinymce.plugins.emoticons.Plugin')();
+})();
+(function () {
+
+var defs = {}; // id -> {dependencies, definition, instance (possibly undefined)}
+
+// Used when there is no 'main' module.
+// The name is probably (hopefully) unique so minification removes for releases.
+var register_3795 = function (id) {
+  var module = dem(id);
+  var fragments = id.split('.');
+  var target = Function('return this;')();
+  for (var i = 0; i < fragments.length - 1; ++i) {
+    if (target[fragments[i]] === undefined)
+      target[fragments[i]] = {};
+    target = target[fragments[i]];
+  }
+  target[fragments[fragments.length - 1]] = module;
+};
+
+var instantiate = function (id) {
+  var actual = defs[id];
+  var dependencies = actual.deps;
+  var definition = actual.defn;
+  var len = dependencies.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances[i] = dem(dependencies[i]);
+  var defResult = definition.apply(null, instances);
+  if (defResult === undefined)
+     throw 'module [' + id + '] returned undefined';
+  actual.instance = defResult;
+};
+
+var def = function (id, dependencies, definition) {
+  if (typeof id !== 'string')
+    throw 'module id must be a string';
+  else if (dependencies === undefined)
+    throw 'no dependencies for ' + id;
+  else if (definition === undefined)
+    throw 'no definition function for ' + id;
+  defs[id] = {
+    deps: dependencies,
+    defn: definition,
+    instance: undefined
+  };
+};
+
+var dem = function (id) {
+  var actual = defs[id];
+  if (actual === undefined)
+    throw 'module [' + id + '] was undefined';
+  else if (actual.instance === undefined)
+    instantiate(id);
+  return actual.instance;
+};
+
+var req = function (ids, callback) {
+  var len = ids.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances.push(dem(ids[i]));
+  callback.apply(null, callback);
+};
+
+var ephox = {};
+
+ephox.bolt = {
+  module: {
+    api: {
+      define: def,
+      require: req,
+      demand: dem
+    }
+  }
+};
+
+var define = def;
+var require = req;
+var demand = dem;
+// this helps with minificiation when using a lot of global references
+var defineGlobal = function (id, ref) {
+  define(id, [], function () { return ref; });
+};
+/*jsc
+["tinymce.plugins.link.Plugin","tinymce.core.PluginManager","tinymce.plugins.link.core.Actions","tinymce.plugins.link.ui.Controls","global!tinymce.util.Tools.resolve","tinymce.core.util.VK","tinymce.plugins.link.ui.Dialog","tinymce.plugins.link.core.OpenUrl","tinymce.plugins.link.core.Utils","tinymce.plugins.link.core.Settings","tinymce.core.util.Delay","tinymce.core.util.Tools","tinymce.core.util.XHR","global!RegExp","tinymce.core.dom.DOMUtils","tinymce.core.Env"]
+jsc*/
+defineGlobal("global!tinymce.util.Tools.resolve", tinymce.util.Tools.resolve);
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.PluginManager',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.PluginManager');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.util.VK',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.util.VK');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.util.Delay',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.util.Delay');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.util.Tools',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.util.Tools');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.util.XHR',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.util.XHR');
+  }
+);
+
+define(
+  'tinymce.plugins.link.core.Settings',
+  [
+
+  ],
+  function () {
+    var assumeExternalTargets = function (editorSettings) {
+      return typeof editorSettings.link_assume_external_targets === 'boolean' ? editorSettings.link_assume_external_targets : false;
+    };
+
+    var hasContextToolbar = function (editorSettings) {
+      return typeof editorSettings.link_context_toolbar === 'boolean' ? editorSettings.link_context_toolbar : false;
+    };
+
+    var getLinkList = function (editorSettings) {
+      return editorSettings.link_list;
+    };
+
+    var hasDefaultLinkTarget = function (editorSettings) {
+      return typeof editorSettings.default_link_target === 'string';
+    };
+
+    var getDefaultLinkTarget = function (editorSettings) {
+      return editorSettings.default_link_target;
+    };
+
+    var getTargetList = function (editorSettings) {
+      return editorSettings.target_list;
+    };
+
+    var setTargetList = function (editor, list) {
+      editor.settings.target_list = list;
+    };
+
+    var shouldShowTargetList = function (editorSettings) {
+      return getTargetList(editorSettings) !== false;
+    };
+
+    var getRelList = function (editorSettings) {
+      return editorSettings.rel_list;
+    };
+
+    var hasRelList = function (editorSettings) {
+      return getRelList(editorSettings) !== undefined;
+    };
+
+    var getLinkClassList = function (editorSettings) {
+      return editorSettings.link_class_list;
+    };
+
+    var hasLinkClassList = function (editorSettings) {
+      return getLinkClassList(editorSettings) !== undefined;
+    };
+
+    var shouldShowLinkTitle = function (editorSettings) {
+      return editorSettings.link_title !== false;
+    };
+
+    var allowUnsafeLinkTarget = function (editorSettings) {
+      return typeof editorSettings.allow_unsafe_link_target === 'boolean' ? editorSettings.allow_unsafe_link_target : false;
+    };
+
+    return {
+      assumeExternalTargets: assumeExternalTargets,
+      hasContextToolbar: hasContextToolbar,
+      getLinkList: getLinkList,
+      hasDefaultLinkTarget: hasDefaultLinkTarget,
+      getDefaultLinkTarget: getDefaultLinkTarget,
+      getTargetList: getTargetList,
+      setTargetList: setTargetList,
+      shouldShowTargetList: shouldShowTargetList,
+      getRelList: getRelList,
+      hasRelList: hasRelList,
+      getLinkClassList: getLinkClassList,
+      hasLinkClassList: hasLinkClassList,
+      shouldShowLinkTitle: shouldShowLinkTitle,
+      allowUnsafeLinkTarget: allowUnsafeLinkTarget
+    };
+  }
+);
+
+defineGlobal("global!RegExp", RegExp);
+/**
+ * Utils.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.link.core.Utils',
+  [
+    'tinymce.core.util.Tools',
+    'tinymce.plugins.link.core.Settings',
+    'global!RegExp'
+  ],
+  function (Tools, Settings, RegExp) {
+
+    var toggleTargetRules = function (rel, isUnsafe) {
+      var rules = ['noopener'];
+      var newRel = rel ? rel.split(/\s+/) : [];
+
+      var toString = function (rel) {
+        return Tools.trim(rel.sort().join(' '));
+      };
+
+      var addTargetRules = function (rel) {
+        rel = removeTargetRules(rel);
+        return rel.length ? rel.concat(rules) : rules;
+      };
+
+      var removeTargetRules = function (rel) {
+        return rel.filter(function (val) {
+          return Tools.inArray(rules, val) === -1;
+        });
+      };
+
+      newRel = isUnsafe ? addTargetRules(newRel) : removeTargetRules(newRel);
+      return newRel.length ? toString(newRel) : null;
+    };
+
+
+    var trimCaretContainers = function (text) {
+      return text.replace(/\uFEFF/g, '');
+    };
+
+
+    var getAnchorElement = function (editor, selectedElm) {
+      selectedElm = selectedElm || editor.selection.getStart();
+      if (isImageFigure(selectedElm)) {
+        // for an image conained in a figure we look for a link inside the selected element
+        return editor.dom.select('a[href]', selectedElm)[0];
+      } else {
+        return editor.dom.getParent(selectedElm, 'a[href]');
+      }
+    };
+
+
+    var getAnchorText = function (selection, anchorElm) {
+      var text = anchorElm ? (anchorElm.innerText || anchorElm.textContent) : selection.getContent({ format: 'text' });
+      return trimCaretContainers(text);
+    };
+
+
+    var isLink = function (elm) {
+      return elm && elm.nodeName === 'A' && elm.href;
+    };
+
+    var hasLinks = function (elements) {
+      return Tools.grep(elements, isLink).length > 0;
+    };
+
+
+    var isOnlyTextSelected = function (html) {
+      // Partial html and not a fully selected anchor element
+      if (/</.test(html) && (!/^<a [^>]+>[^<]+<\/a>$/.test(html) || html.indexOf('href=') == -1)) {
+        return false;
+      }
+
+      return true;
+    };
+
+
+    var isImageFigure = function (node) {
+      return node && node.nodeName === 'FIGURE' && /\bimage\b/i.test(node.className);
+    };
+
+
+    var link = function (editor, attachState) {
+      return function (data) {
+        editor.undoManager.transact(function () {
+          var selectedElm = editor.selection.getNode();
+          var anchorElm = getAnchorElement(editor, selectedElm);
+
+          var linkAttrs = {
+            href: data.href,
+            target: data.target ? data.target : null,
+            rel: data.rel ? data.rel : null,
+            "class": data["class"] ? data["class"] : null,
+            title: data.title ? data.title : null
+          };
+
+          if (!Settings.hasRelList(editor.settings) && Settings.allowUnsafeLinkTarget(editor.settings) === false) {
+            linkAttrs.rel = toggleTargetRules(linkAttrs.rel, linkAttrs.target == '_blank');
+          }
+
+          if (data.href === attachState.href) {
+            attachState.attach();
+            attachState = {};
+          }
+
+          if (anchorElm) {
+            editor.focus();
+
+            if (data.hasOwnProperty('text')) {
+              if ("innerText" in anchorElm) {
+                anchorElm.innerText = data.text;
+              } else {
+                anchorElm.textContent = data.text;
+              }
+            }
+
+            editor.dom.setAttribs(anchorElm, linkAttrs);
+
+            editor.selection.select(anchorElm);
+            editor.undoManager.add();
+          } else {
+            if (isImageFigure(selectedElm)) {
+              linkImageFigure(editor, selectedElm, linkAttrs);
+            } else if (data.hasOwnProperty('text')) {
+              editor.insertContent(editor.dom.createHTML('a', linkAttrs, editor.dom.encode(data.text)));
+            } else {
+              editor.execCommand('mceInsertLink', false, linkAttrs);
+            }
+          }
+        });
+      };
+    };
+
+
+    var unlink = function (editor) {
+      return function () {
+        editor.undoManager.transact(function () {
+          var node = editor.selection.getNode();
+          if (isImageFigure(node)) {
+            unlinkImageFigure(editor, node);
+          } else {
+            editor.execCommand('unlink');
+          }
+        });
+      };
+    };
+
+
+    var unlinkImageFigure = function (editor, fig) {
+      var a, img;
+      img = editor.dom.select('img', fig)[0];
+      if (img) {
+        a = editor.dom.getParents(img, 'a[href]', fig)[0];
+        if (a) {
+          a.parentNode.insertBefore(img, a);
+          editor.dom.remove(a);
+        }
+      }
+    };
+
+
+    var linkImageFigure = function (editor, fig, attrs) {
+      var a, img;
+      img = editor.dom.select('img', fig)[0];
+      if (img) {
+        a = editor.dom.create('a', attrs);
+        img.parentNode.insertBefore(a, img);
+        a.appendChild(img);
+      }
+    };
+
+    return {
+      link: link,
+      unlink: unlink,
+      isLink: isLink,
+      hasLinks: hasLinks,
+      isOnlyTextSelected: isOnlyTextSelected,
+      getAnchorElement: getAnchorElement,
+      getAnchorText: getAnchorText,
+      toggleTargetRules: toggleTargetRules
+    };
+  }
+);
+/**
+ * Dialog.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.link.ui.Dialog',
+  [
+    'tinymce.core.util.Delay',
+    'tinymce.core.util.Tools',
+    'tinymce.core.util.XHR',
+    'tinymce.plugins.link.core.Utils',
+    'tinymce.plugins.link.core.Settings'
+  ],
+  function (Delay, Tools, XHR, Utils, Settings) {
+    var attachState = {};
+
+    var createLinkList = function (editor, callback) {
+      var linkList = Settings.getLinkList(editor.settings);
+
+      if (typeof linkList == "string") {
+        XHR.send({
+          url: linkList,
+          success: function (text) {
+            callback(editor, JSON.parse(text));
+          }
+        });
+      } else if (typeof linkList == "function") {
+        linkList(function (list) {
+          callback(editor, list);
+        });
+      } else {
+        callback(editor, linkList);
+      }
+    };
+
+    var buildListItems = function (inputList, itemCallback, startItems) {
+      var appendItems = function (values, output) {
+        output = output || [];
+
+        Tools.each(values, function (item) {
+          var menuItem = { text: item.text || item.title };
+
+          if (item.menu) {
+            menuItem.menu = appendItems(item.menu);
+          } else {
+            menuItem.value = item.value;
+
+            if (itemCallback) {
+              itemCallback(menuItem);
+            }
+          }
+
+          output.push(menuItem);
+        });
+
+        return output;
+      };
+
+      return appendItems(inputList, startItems || []);
+    };
+
+    // Delay confirm since onSubmit will move focus
+    var delayedConfirm = function (editor, message, callback) {
+      var rng = editor.selection.getRng();
+
+      Delay.setEditorTimeout(editor, function () {
+        editor.windowManager.confirm(message, function (state) {
+          editor.selection.setRng(rng);
+          callback(state);
+        });
+      });
+    };
+
+    var showDialog = function (editor, linkList) {
+      var data = {}, selection = editor.selection, dom = editor.dom, anchorElm, initialText;
+      var win, onlyText, textListCtrl, linkListCtrl, relListCtrl, targetListCtrl, classListCtrl, linkTitleCtrl, value;
+
+      var linkListChangeHandler = function (e) {
+        var textCtrl = win.find('#text');
+
+        if (!textCtrl.value() || (e.lastControl && textCtrl.value() == e.lastControl.text())) {
+          textCtrl.value(e.control.text());
+        }
+
+        win.find('#href').value(e.control.value());
+      };
+
+      var buildAnchorListControl = function (url) {
+        var anchorList = [];
+
+        Tools.each(editor.dom.select('a:not([href])'), function (anchor) {
+          var id = anchor.name || anchor.id;
+
+          if (id) {
+            anchorList.push({
+              text: id,
+              value: '#' + id,
+              selected: url.indexOf('#' + id) != -1
+            });
+          }
+        });
+
+        if (anchorList.length) {
+          anchorList.unshift({ text: 'None', value: '' });
+
+          return {
+            name: 'anchor',
+            type: 'listbox',
+            label: 'Anchors',
+            values: anchorList,
+            onselect: linkListChangeHandler
+          };
+        }
+      };
+
+      var updateText = function () {
+        if (!initialText && onlyText && !data.text) {
+          this.parent().parent().find('#text')[0].value(this.value());
+        }
+      };
+
+      var urlChange = function (e) {
+        var meta = e.meta || {};
+
+        if (linkListCtrl) {
+          linkListCtrl.value(editor.convertURL(this.value(), 'href'));
+        }
+
+        Tools.each(e.meta, function (value, key) {
+          var inp = win.find('#' + key);
+
+          if (key === 'text') {
+            if (initialText.length === 0) {
+              inp.value(value);
+              data.text = value;
+            }
+          } else {
+            inp.value(value);
+          }
+        });
+
+        if (meta.attach) {
+          attachState = {
+            href: this.value(),
+            attach: meta.attach
+          };
+        }
+
+        if (!meta.text) {
+          updateText.call(this);
+        }
+      };
+
+      var onBeforeCall = function (e) {
+        e.meta = win.toJSON();
+      };
+
+      onlyText = Utils.isOnlyTextSelected(selection.getContent());
+      anchorElm = Utils.getAnchorElement(editor);
+
+      data.text = initialText = Utils.getAnchorText(editor.selection, anchorElm);
+      data.href = anchorElm ? dom.getAttrib(anchorElm, 'href') : '';
+
+      if (anchorElm) {
+        data.target = dom.getAttrib(anchorElm, 'target');
+      } else if (Settings.hasDefaultLinkTarget(editor.settings)) {
+        data.target = Settings.getDefaultLinkTarget(editor.settings);
+      }
+
+      if ((value = dom.getAttrib(anchorElm, 'rel'))) {
+        data.rel = value;
+      }
+
+      if ((value = dom.getAttrib(anchorElm, 'class'))) {
+        data['class'] = value;
+      }
+
+      if ((value = dom.getAttrib(anchorElm, 'title'))) {
+        data.title = value;
+      }
+
+      if (onlyText) {
+        textListCtrl = {
+          name: 'text',
+          type: 'textbox',
+          size: 40,
+          label: 'Text to display',
+          onchange: function () {
+            data.text = this.value();
+          }
+        };
+      }
+
+      if (linkList) {
+        linkListCtrl = {
+          type: 'listbox',
+          label: 'Link list',
+          values: buildListItems(
+            linkList,
+            function (item) {
+              item.value = editor.convertURL(item.value || item.url, 'href');
+            },
+            [{ text: 'None', value: '' }]
+          ),
+          onselect: linkListChangeHandler,
+          value: editor.convertURL(data.href, 'href'),
+          onPostRender: function () {
+            /*eslint consistent-this:0*/
+            linkListCtrl = this;
+          }
+        };
+      }
+
+      if (Settings.shouldShowTargetList(editor.settings)) {
+        if (Settings.getTargetList(editor.settings) === undefined) {
+          Settings.setTargetList(editor, [
+            { text: 'None', value: '' },
+            { text: 'New window', value: '_blank' }
+          ]);
+        }
+
+        targetListCtrl = {
+          name: 'target',
+          type: 'listbox',
+          label: 'Target',
+          values: buildListItems(Settings.getTargetList(editor.settings))
+        };
+      }
+
+      if (Settings.hasRelList(editor.settings)) {
+        relListCtrl = {
+          name: 'rel',
+          type: 'listbox',
+          label: 'Rel',
+          values: buildListItems(
+            Settings.getRelList(editor.settings),
+            function (item) {
+              if (Settings.allowUnsafeLinkTarget(editor.settings) === false) {
+                item.value = Utils.toggleTargetRules(item.value, data.target === '_blank');
+              }
+            }
+          )
+        };
+      }
+
+      if (Settings.hasLinkClassList(editor.settings)) {
+        classListCtrl = {
+          name: 'class',
+          type: 'listbox',
+          label: 'Class',
+          values: buildListItems(
+            Settings.getLinkClassList(editor.settings),
+            function (item) {
+              if (item.value) {
+                item.textStyle = function () {
+                  return editor.formatter.getCssText({ inline: 'a', classes: [item.value] });
+                };
+              }
+            }
+          )
+        };
+      }
+
+      if (Settings.shouldShowLinkTitle(editor.settings)) {
+        linkTitleCtrl = {
+          name: 'title',
+          type: 'textbox',
+          label: 'Title',
+          value: data.title
+        };
+      }
+
+      win = editor.windowManager.open({
+        title: 'Insert link',
+        data: data,
+        body: [
+          {
+            name: 'href',
+            type: 'filepicker',
+            filetype: 'file',
+            size: 40,
+            autofocus: true,
+            label: 'Url',
+            onchange: urlChange,
+            onkeyup: updateText,
+            onbeforecall: onBeforeCall
+          },
+          textListCtrl,
+          linkTitleCtrl,
+          buildAnchorListControl(data.href),
+          linkListCtrl,
+          relListCtrl,
+          targetListCtrl,
+          classListCtrl
+        ],
+        onSubmit: function (e) {
+          var assumeExternalTargets = Settings.assumeExternalTargets(editor.settings);
+          var insertLink = Utils.link(editor, attachState);
+          var removeLink = Utils.unlink(editor);
+
+          var resultData = Tools.extend({}, data, e.data);
+          /*eslint dot-notation: 0*/
+          var href = resultData.href;
+
+          if (!href) {
+            removeLink();
+            return;
+          }
+
+          if (!onlyText || resultData.text === initialText) {
+            delete resultData.text;
+          }
+
+          // Is email and not //user@domain.com
+          if (href.indexOf('@') > 0 && href.indexOf('//') == -1 && href.indexOf('mailto:') == -1) {
+            delayedConfirm(
+              editor,
+              'The URL you entered seems to be an email address. Do you want to add the required mailto: prefix?',
+              function (state) {
+                if (state) {
+                  resultData.href = 'mailto:' + href;
+                }
+                insertLink(resultData);
+              }
+            );
+            return;
+          }
+
+          // Is not protocol prefixed
+          if ((assumeExternalTargets === true && !/^\w+:/i.test(href)) ||
+            (assumeExternalTargets === false && /^\s*www[\.|\d\.]/i.test(href))) {
+            delayedConfirm(
+              editor,
+              'The URL you entered seems to be an external link. Do you want to add the required http:// prefix?',
+              function (state) {
+                if (state) {
+                  resultData.href = 'http://' + href;
+                }
+                insertLink(resultData);
+              }
+            );
+            return;
+          }
+
+          insertLink(resultData);
+        }
+      });
+    };
+
+    var open = function (editor) {
+      createLinkList(editor, showDialog);
+    };
+
+    return {
+      open: open
+    };
+  }
+);
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.dom.DOMUtils',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.dom.DOMUtils');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.Env',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.Env');
+  }
+);
+
+/**
+ * OpenUrl.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.link.core.OpenUrl',
+  [
+    'tinymce.core.dom.DOMUtils',
+    'tinymce.core.Env'
+  ],
+  function (DOMUtils, Env) {
+    var appendClickRemove = function (link, evt) {
+      document.body.appendChild(link);
+      link.dispatchEvent(evt);
+      document.body.removeChild(link);
+    };
+
+    var open = function (url) {
+      // Chrome and Webkit has implemented noopener and works correctly with/without popup blocker
+      // Firefox has it implemented noopener but when the popup blocker is activated it doesn't work
+      // Edge has only implemented noreferrer and it seems to remove opener as well
+      // Older IE versions pre IE 11 falls back to a window.open approach
+      if (!Env.ie || Env.ie > 10) {
+        var link = document.createElement('a');
+        link.target = '_blank';
+        link.href = url;
+        link.rel = 'noreferrer noopener';
+
+        var evt = document.createEvent('MouseEvents');
+        evt.initMouseEvent('click', true, true, window, 0, 0, 0, 0, 0, false, false, false, false, 0, null);
+
+        appendClickRemove(link, evt);
+      } else {
+        var win = window.open('', '_blank');
+        if (win) {
+          win.opener = null;
+          var doc = win.document;
+          doc.open();
+          doc.write('<meta http-equiv="refresh" content="0; url=' + DOMUtils.DOM.encode(url) + '">');
+          doc.close();
+        }
+      }
+    };
+
+    return {
+      open: open
+    };
+  }
+);
+/**
+ * Actions.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.link.core.Actions',
+  [
+    'tinymce.core.util.VK',
+    'tinymce.plugins.link.ui.Dialog',
+    'tinymce.plugins.link.core.OpenUrl',
+    'tinymce.plugins.link.core.Utils',
+    'tinymce.plugins.link.core.Settings'
+  ],
+  function (VK, Dialog, OpenUrl, Utils, Settings) {
+    var getLink = function (editor, elm) {
+      return editor.dom.getParent(elm, 'a[href]');
+    };
+
+    var getSelectedLink = function (editor) {
+      return getLink(editor, editor.selection.getStart());
+    };
+
+    var getHref = function (elm) {
+      // Returns the real href value not the resolved a.href value
+      var href = elm.getAttribute('data-mce-href');
+      return href ? href : elm.getAttribute('href');
+    };
+
+    var isContextMenuVisible = function (editor) {
+      var contextmenu = editor.plugins.contextmenu;
+      return contextmenu ? contextmenu.isContextMenuVisible() : false;
+    };
+
+    var hasOnlyAltModifier = function (e) {
+      return e.altKey === true && e.shiftKey === false && e.ctrlKey === false && e.metaKey === false;
+    };
+
+    var gotoLink = function (editor, a) {
+      if (a) {
+        var href = getHref(a);
+        if (/^#/.test(href)) {
+          var targetEl = editor.$(href);
+          if (targetEl.length) {
+            editor.selection.scrollIntoView(targetEl[0], true);
+          }
+        } else {
+          OpenUrl.open(a.href);
+        }
+      }
+    };
+
+    var openDialog = function (editor) {
+      return function () {
+        Dialog.open(editor);
+      };
+    };
+
+    var gotoSelectedLink = function (editor) {
+      return function () {
+        gotoLink(editor, getSelectedLink(editor));
+      };
+    };
+
+    var leftClickedOnAHref = function (editor) {
+      return function (elm) {
+        var sel, rng, node;
+        if (Settings.hasContextToolbar(editor.settings) && !isContextMenuVisible(editor) && Utils.isLink(elm)) {
+          sel = editor.selection;
+          rng = sel.getRng();
+          node = rng.startContainer;
+          // ignore cursor positions at the beginning/end (to make context toolbar less noisy)
+          if (node.nodeType == 3 && sel.isCollapsed() && rng.startOffset > 0 && rng.startOffset < node.data.length) {
+            return true;
+          }
+        }
+        return false;
+      };
+    };
+
+    var setupGotoLinks = function (editor) {
+      editor.on('click', function (e) {
+        var link = getLink(editor, e.target);
+        if (link && VK.metaKeyPressed(e)) {
+          e.preventDefault();
+          gotoLink(editor, link);
+        }
+      });
+
+      editor.on('keydown', function (e) {
+        var link = getSelectedLink(editor);
+        if (link && e.keyCode === 13 && hasOnlyAltModifier(e)) {
+          e.preventDefault();
+          gotoLink(editor, link);
+        }
+      });
+    };
+
+    var toggleActiveState = function (editor) {
+      return function () {
+        var self = this;
+        editor.on('nodechange', function (e) {
+          self.active(!editor.readonly && !!Utils.getAnchorElement(editor, e.element));
+        });
+      };
+    };
+
+    var toggleViewLinkState = function (editor) {
+      return function () {
+        var self = this;
+
+        var toggleVisibility = function (e) {
+          if (Utils.hasLinks(e.parents)) {
+            self.show();
+          } else {
+            self.hide();
+          }
+        };
+
+        if (!Utils.hasLinks(editor.dom.getParents(editor.selection.getStart()))) {
+          self.hide();
+        }
+
+        editor.on('nodechange', toggleVisibility);
+
+        self.on('remove', function () {
+          editor.off('nodechange', toggleVisibility);
+        });
+      };
+    };
+
+    return {
+      openDialog: openDialog,
+      gotoSelectedLink: gotoSelectedLink,
+      leftClickedOnAHref: leftClickedOnAHref,
+      setupGotoLinks: setupGotoLinks,
+      toggleActiveState: toggleActiveState,
+      toggleViewLinkState: toggleViewLinkState
+    };
+  }
+);
+/**
+ * Controls.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.link.ui.Controls',
+  [
+    'tinymce.plugins.link.core.Actions',
+    'tinymce.plugins.link.core.Utils'
+  ],
+  function (Actions, Utils) {
+
+    var setupButtons = function (editor) {
+      editor.addButton('link', {
+        icon: 'link',
+        tooltip: 'Insert/edit link',
+        shortcut: 'Meta+K',
+        onclick: Actions.openDialog(editor),
+        onpostrender: Actions.toggleActiveState(editor)
+      });
+
+      editor.addButton('unlink', {
+        icon: 'unlink',
+        tooltip: 'Remove link',
+        onclick: Utils.unlink(editor),
+        onpostrender: Actions.toggleActiveState(editor)
+      });
+
+      if (editor.addContextToolbar) {
+        editor.addButton('openlink', {
+          icon: 'newtab',
+          tooltip: 'Open link',
+          onclick: Actions.gotoSelectedLink(editor)
+        });
+      }
+    };
+
+    var setupMenuItems = function (editor) {
+      editor.addMenuItem('openlink', {
+        text: 'Open link',
+        icon: 'newtab',
+        onclick: Actions.gotoSelectedLink(editor),
+        onPostRender: Actions.toggleViewLinkState(editor),
+        prependToContext: true
+      });
+
+      editor.addMenuItem('link', {
+        icon: 'link',
+        text: 'Link',
+        shortcut: 'Meta+K',
+        onclick: Actions.openDialog(editor),
+        stateSelector: 'a[href]',
+        context: 'insert',
+        prependToContext: true
+      });
+    };
+
+    var setupContextToolbars = function (editor) {
+      if (editor.addContextToolbar) {
+        editor.addContextToolbar(
+          Actions.leftClickedOnAHref(editor),
+          'openlink | link unlink'
+        );
+      }
+    };
+
+    return {
+      setupButtons: setupButtons,
+      setupMenuItems: setupMenuItems,
+      setupContextToolbars: setupContextToolbars
+    };
+  }
+);
+/**
+ * Plugin.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.plugins.link.Plugin',
+  [
+    'tinymce.core.PluginManager',
+    'tinymce.plugins.link.core.Actions',
+    'tinymce.plugins.link.ui.Controls'
+  ],
+  function (PluginManager, Actions, Controls) {
+    PluginManager.add('link', function (editor) {
+      Controls.setupButtons(editor);
+      Controls.setupMenuItems(editor);
+      Controls.setupContextToolbars(editor);
+      Actions.setupGotoLinks(editor);
+      editor.addShortcut('Meta+K', '', Actions.openDialog(editor));
+      editor.addCommand('mceLink', Actions.openDialog(editor));
+    });
+
+    return function () { };
+  }
+);
+dem('tinymce.plugins.link.Plugin')();
+})();
+(function () {
+
+var defs = {}; // id -> {dependencies, definition, instance (possibly undefined)}
+
+// Used when there is no 'main' module.
+// The name is probably (hopefully) unique so minification removes for releases.
+var register_3795 = function (id) {
+  var module = dem(id);
+  var fragments = id.split('.');
+  var target = Function('return this;')();
+  for (var i = 0; i < fragments.length - 1; ++i) {
+    if (target[fragments[i]] === undefined)
+      target[fragments[i]] = {};
+    target = target[fragments[i]];
+  }
+  target[fragments[fragments.length - 1]] = module;
+};
+
+var instantiate = function (id) {
+  var actual = defs[id];
+  var dependencies = actual.deps;
+  var definition = actual.defn;
+  var len = dependencies.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances[i] = dem(dependencies[i]);
+  var defResult = definition.apply(null, instances);
+  if (defResult === undefined)
+     throw 'module [' + id + '] returned undefined';
+  actual.instance = defResult;
+};
+
+var def = function (id, dependencies, definition) {
+  if (typeof id !== 'string')
+    throw 'module id must be a string';
+  else if (dependencies === undefined)
+    throw 'no dependencies for ' + id;
+  else if (definition === undefined)
+    throw 'no definition function for ' + id;
+  defs[id] = {
+    deps: dependencies,
+    defn: definition,
+    instance: undefined
+  };
+};
+
+var dem = function (id) {
+  var actual = defs[id];
+  if (actual === undefined)
+    throw 'module [' + id + '] was undefined';
+  else if (actual.instance === undefined)
+    instantiate(id);
+  return actual.instance;
+};
+
+var req = function (ids, callback) {
+  var len = ids.length;
+  var instances = new Array(len);
+  for (var i = 0; i < len; ++i)
+    instances.push(dem(ids[i]));
+  callback.apply(null, callback);
+};
+
+var ephox = {};
+
+ephox.bolt = {
+  module: {
+    api: {
+      define: def,
+      require: req,
+      demand: dem
+    }
+  }
+};
+
+var define = def;
+var require = req;
+var demand = dem;
+// this helps with minificiation when using a lot of global references
+var defineGlobal = function (id, ref) {
+  define(id, [], function () { return ref; });
+};
+/*jsc
+["tinymce.plugins.code.Plugin","tinymce.core.dom.DOMUtils","tinymce.core.PluginManager","global!tinymce.util.Tools.resolve"]
+jsc*/
+defineGlobal("global!tinymce.util.Tools.resolve", tinymce.util.Tools.resolve);
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.dom.DOMUtils',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.dom.DOMUtils');
+  }
+);
+
+/**
+ * ResolveGlobal.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+define(
+  'tinymce.core.PluginManager',
+  [
+    'global!tinymce.util.Tools.resolve'
+  ],
+  function (resolve) {
+    return resolve('tinymce.PluginManager');
+  }
+);
+
+/**
+ * Plugin.js
+ *
+ * Released under LGPL License.
+ * Copyright (c) 1999-2017 Ephox Corp. All rights reserved
+ *
+ * License: http://www.tinymce.com/license
+ * Contributing: http://www.tinymce.com/contributing
+ */
+
+/**
+ * This class contains all core logic for the code plugin.
+ *
+ * @class tinymce.code.Plugin
+ * @private
+ */
+define(
+  'tinymce.plugins.code.Plugin',
+  [
+    'tinymce.core.dom.DOMUtils',
+    'tinymce.core.PluginManager'
+  ],
+  function (DOMUtils, PluginManager) {
+    PluginManager.add('code', function (editor) {
+      function showDialog() {
+        var win = editor.windowManager.open({
+          title: "Source code",
+          body: {
+            type: 'textbox',
+            name: 'code',
+            multiline: true,
+            minWidth: editor.getParam("code_dialog_width", 600),
+            minHeight: editor.getParam("code_dialog_height", Math.min(DOMUtils.DOM.getViewPort().h - 200, 500)),
+            spellcheck: false,
+            style: 'direction: ltr; text-align: left'
+          },
+          onSubmit: function (e) {
+            // We get a lovely "Wrong document" error in IE 11 if we
+            // don't move the focus to the editor before creating an undo
+            // transation since it tries to make a bookmark for the current selection
+            editor.focus();
+
+            editor.undoManager.transact(function () {
+              editor.setContent(e.data.code);
+            });
+
+            editor.selection.setCursorLocation();
+            editor.nodeChanged();
+          }
+        });
+
+        // Gecko has a major performance issue with textarea
+        // contents so we need to set it when all reflows are done
+        win.find('#code').value(editor.getContent({ source_view: true }));
+      }
+
+      editor.addCommand("mceCodeEditor", showDialog);
+
+      editor.addButton('code', {
+        icon: 'code',
+        tooltip: 'Source code',
+        onclick: showDialog
+      });
+
+      editor.addMenuItem('code', {
+        icon: 'code',
+        text: 'Source code',
+        context: 'tools',
+        onclick: showDialog
+      });
+    });
+
+    return function () { };
+  }
+);
+dem('tinymce.plugins.code.Plugin')();
+})();
 /**
  * This class contains all core logic for the teamuplinknewtab plugin.
  *
@@ -58815,7 +69387,6 @@ dem('tinymce.themes.modern.Theme')();
  */
 
 (function () {
-
     var defs = {}; // id -> {dependencies, definition, instance (possibly undefined)}
 
     // Used when there is no 'main' module.
@@ -58908,36 +69479,36 @@ dem('tinymce.themes.modern.Theme')();
         }
     );
 
-define(
-    'tinymce.plugins.teamuplinknewtab.Plugin',
-    ['tinymce.core.PluginManager'],
-    function (PluginManager) {
-        PluginManager.add('teamuplinknewtab', function (editor) {
-            editor.addMenuItem('teamuplinknewtab', {
-                icon: 'image',
-                text: 'Open in new tab',
-                //shortcut: 'Ctrl+O',
-                //disabled: true,
-                onclick: function() {
-                    var node = editor.selection.getNode(), url;
+    define(
+        'tinymce.plugins.teamuplinknewtab.Plugin',
+        ['tinymce.core.PluginManager'],
+        function (PluginManager) {
+            PluginManager.add('teamuplinknewtab', function (editor) {
+                editor.addMenuItem('teamuplinknewtab', {
+                    icon: 'image',
+                    text: 'Open in new tab',
+                    //shortcut: 'Ctrl+O',
+                    //disabled: true,
+                    onclick: function() {
+                        var node = editor.selection.getNode(), url;
 
-                    if (node.hasAttribute('data-mce-src')) {
-                        url = node.getAttribute('data-mce-src');
-                    } else if (node.hasAttribute('data-mce-href')) {
-                        url = node.getAttribute('data-mce-href');
-                    }
+                        if (node.hasAttribute('data-mce-src')) {
+                            url = node.getAttribute('data-mce-src');
+                        } else if (node.hasAttribute('data-mce-href')) {
+                            url = node.getAttribute('data-mce-href');
+                        }
 
-                    if (url) {
-                        window.open(url, '_blank');
-                    }
-                },
-                context: 'insert'
+                        if (url) {
+                            window.open(url, '_blank');
+                        }
+                    },
+                    context: 'insert'
+                });
             });
-        });
 
-        return function () { };
-    }
-);
+            return function () { };
+        }
+    );
 
-dem('tinymce.plugins.teamuplinknewtab.Plugin')();
+    dem('tinymce.plugins.teamuplinknewtab.Plugin')();
 })();
