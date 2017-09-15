@@ -877,7 +877,7 @@ define(
         }
 
         e.preventDefault();
-        contextmenu = editor.settings.contextmenu || 'copy cut paste | link image inserttable | cell row column deletetable | teamuplinknewtab';
+        contextmenu = editor.settings.contextmenu || 'copy cut paste | link image inserttable | teamuplinknewtab';
 
         // Render menu
         if (!menu) {
