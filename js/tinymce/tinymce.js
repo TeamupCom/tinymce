@@ -58,8 +58,8 @@ var req = function (ids, callback) {
   var len = ids.length;
   var instances = new Array(len);
   for (var i = 0; i < len; ++i)
-    instances.push(dem(ids[i]));
-  callback.apply(null, callback);
+    instances[i] = dem(ids[i]);
+  callback.apply(null, instances);
 };
 
 var ephox = {};
@@ -77,7 +77,7 @@ ephox.bolt = {
 var define = def;
 var require = req;
 var demand = dem;
-// this helps with minificiation when using a lot of global references
+// this helps with minification when using a lot of global references
 var defineGlobal = function (id, ref) {
   define(id, [], function () { return ref; });
 };
@@ -97,6 +97,12 @@ define(
   function (Array, Error) {
 
     var noop = function () { };
+
+    var noarg = function (f) {
+      return function () {
+        return f();
+      };
+    };
 
     var compose = function (fa, fb) {
       return function () {
@@ -158,10 +164,11 @@ define(
 
     var never = constant(false);
     var always = constant(true);
-    
+
 
     return {
       noop: noop,
+      noarg: noarg,
       compose: compose,
       constant: constant,
       identity: identity,
@@ -6635,8 +6642,9 @@ define(
         - "apply" operation on the Option Apply/Applicative.
         - Equivalent to <*> in Haskell/PureScript.
 
-      each :: this Option a -> (a -> b) -> Option b
-        - same as 'map'
+      each :: this Option a -> (a -> b) -> undefined
+        - similar to 'map', but doesn't return a value.
+        - intended for clarity when performing side effects.
 
       bind :: this Option a -> (a -> Option b) -> Option b
         - "bind"/"flatMap" operation on the Option Bind/Monad.
@@ -7041,6 +7049,14 @@ define(
       return copy;
     };
 
+    var head = function (xs) {
+      return xs.length === 0 ? Option.none() : Option.some(xs[0]);
+    };
+
+    var last = function (xs) {
+      return xs.length === 0 ? Option.none() : Option.some(xs[xs.length - 1]);
+    };
+
     return {
       map: map,
       each: each,
@@ -7065,7 +7081,9 @@ define(
       mapToObject: mapToObject,
       pure: pure,
       sort: sort,
-      range: range
+      range: range,
+      head: head,
+      last: last
     };
   }
 );
@@ -14612,12 +14630,13 @@ define(
 
   [
     'ephox.katamari.api.Fun',
+    'ephox.katamari.api.Option',
     'global!Error',
     'global!console',
     'global!document'
   ],
 
-  function (Fun, Error, console, document) {
+  function (Fun, Option, Error, console, document) {
     var fromHtml = function (html, scope) {
       var doc = scope || document;
       var div = doc.createElement('div');
@@ -14648,11 +14667,16 @@ define(
       };
     };
 
+    var fromPoint = function (doc, x, y) {
+      return Option.from(doc.dom().elementFromPoint(x, y)).map(fromDom);
+    };
+
     return {
       fromHtml: fromHtml,
       fromTag: fromTag,
       fromText: fromText,
-      fromDom: fromDom
+      fromDom: fromDom,
+      fromPoint: fromPoint
     };
   }
 );
@@ -15015,11 +15039,8 @@ define(
 
   function () {
     // Use window object as the global if it's available since CSP will block script evals
-    if (typeof window !== 'undefined') {
-      return window;
-    } else {
-      return Function('return this;')();
-    }
+    var global = typeof window !== 'undefined' ? window : Function('return this;')();
+    return global;
   }
 );
 
@@ -15807,27 +15828,6 @@ define(
   ],
 
   function (Arr, Option, Element, NodeTypes, Error, document) {
-    /*
-     * There's a lot of code here; the aim is to allow the browser to optimise constant comparisons,
-     * instead of doing object lookup feature detection on every call
-     */
-    var STANDARD = 0;
-    var MSSTANDARD = 1;
-    var WEBKITSTANDARD = 2;
-    var FIREFOXSTANDARD = 3;
-
-    var selectorType = (function () {
-      var test = document.createElement('span');
-      // As of Chrome 34 / Safari 7.1 / FireFox 34, everyone except IE has the unprefixed function.
-      // Still check for the others, but do it last.
-      return test.matches !== undefined ? STANDARD :
-             test.msMatchesSelector !== undefined ? MSSTANDARD :
-             test.webkitMatchesSelector !== undefined ? WEBKITSTANDARD :
-             test.mozMatchesSelector !== undefined ? FIREFOXSTANDARD :
-             -1;
-    })();
-
-
     var ELEMENT = NodeTypes.ELEMENT;
     var DOCUMENT = NodeTypes.DOCUMENT;
 
@@ -15837,10 +15837,10 @@ define(
 
       // As of Chrome 34 / Safari 7.1 / FireFox 34, everyone except IE has the unprefixed function.
       // Still check for the others, but do it last.
-      else if (selectorType === STANDARD) return elem.matches(selector);
-      else if (selectorType === MSSTANDARD) return elem.msMatchesSelector(selector);
-      else if (selectorType === WEBKITSTANDARD) return elem.webkitMatchesSelector(selector);
-      else if (selectorType === FIREFOXSTANDARD) return elem.mozMatchesSelector(selector);
+      else if (elem.matches !== undefined) return elem.matches(selector);
+      else if (elem.msMatchesSelector !== undefined) return elem.msMatchesSelector(selector);
+      else if (elem.webkitMatchesSelector !== undefined) return elem.webkitMatchesSelector(selector);
+      else if (elem.mozMatchesSelector !== undefined) return elem.mozMatchesSelector(selector);
       else throw new Error('Browser lacks native selectors'); // unfortunately we can't throw this on startup :(
     };
 
@@ -16046,6 +16046,14 @@ define(
       return child(element, element.dom().childNodes.length - 1);
     };
 
+    var childNodesCount = function (element) {
+      return element.dom().childNodes.length;
+    };
+
+    var hasChildNodes = function (element) {
+      return element.dom().hasChildNodes();
+    };
+
     var spot = Struct.immutable('element', 'offset');
     var leaf = function (element, offset) {
       var cs = children(element);
@@ -16069,6 +16077,8 @@ define(
       child: child,
       firstChild: firstChild,
       lastChild: lastChild,
+      childNodesCount: childNodesCount,
+      hasChildNodes: hasChildNodes,
       leaf: leaf
     };
   }
@@ -25283,6 +25293,7 @@ define(
       return Selectors.one(selector, scope);
     };
 
+    // Returns Some(closest ancestor element (sugared)) matching 'selector' up to isRoot, or None() otherwise
     var closest = function (scope, selector, isRoot) {
       return ClosestOrAncestor(Selectors.is, ancestor, scope, selector, isRoot);
     };
@@ -38358,6 +38369,19 @@ define(
       return Option.from(raw).filter(function (r) { return r.length > 0; });
     };
 
+    var getAllRaw = function (element) {
+      var css = {};
+      var dom = element.dom();
+
+      if (Style.isSupported(dom)) {
+        for (var i = 0; i < dom.style.length; i++) {
+          var ruleName = dom.style.item(i);
+          css[ruleName] = dom.style[ruleName];
+        }
+      }
+      return css;
+    };
+
     var isValidValue = function (tag, property, value) {
       var element = Element.fromTag(tag);
       set(element, property, value);
@@ -38423,6 +38447,7 @@ define(
       remove: remove,
       get: get,
       getRaw: getRaw,
+      getAllRaw: getAllRaw,
       isValidValue: isValidValue,
       reflow: reflow,
       transfer: transfer

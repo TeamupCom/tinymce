@@ -57,8 +57,8 @@ var req = function (ids, callback) {
   var len = ids.length;
   var instances = new Array(len);
   for (var i = 0; i < len; ++i)
-    instances.push(dem(ids[i]));
-  callback.apply(null, callback);
+    instances[i] = dem(ids[i]);
+  callback.apply(null, instances);
 };
 
 var ephox = {};
@@ -76,7 +76,7 @@ ephox.bolt = {
 var define = def;
 var require = req;
 var demand = dem;
-// this helps with minificiation when using a lot of global references
+// this helps with minification when using a lot of global references
 var defineGlobal = function (id, ref) {
   define(id, [], function () { return ref; });
 };
@@ -96,6 +96,12 @@ define(
   function (Array, Error) {
 
     var noop = function () { };
+
+    var noarg = function (f) {
+      return function () {
+        return f();
+      };
+    };
 
     var compose = function (fa, fb) {
       return function () {
@@ -157,10 +163,11 @@ define(
 
     var never = constant(false);
     var always = constant(true);
-    
+
 
     return {
       noop: noop,
+      noarg: noarg,
       compose: compose,
       constant: constant,
       identity: identity,

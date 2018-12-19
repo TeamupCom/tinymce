@@ -57,8 +57,8 @@ var req = function (ids, callback) {
   var len = ids.length;
   var instances = new Array(len);
   for (var i = 0; i < len; ++i)
-    instances.push(dem(ids[i]));
-  callback.apply(null, callback);
+    instances[i] = dem(ids[i]);
+  callback.apply(null, instances);
 };
 
 var ephox = {};
@@ -76,7 +76,7 @@ ephox.bolt = {
 var define = def;
 var require = req;
 var demand = dem;
-// this helps with minificiation when using a lot of global references
+// this helps with minification when using a lot of global references
 var defineGlobal = function (id, ref) {
   define(id, [], function () { return ref; });
 };
@@ -1576,6 +1576,12 @@ define(
 
     var noop = function () { };
 
+    var noarg = function (f) {
+      return function () {
+        return f();
+      };
+    };
+
     var compose = function (fa, fb) {
       return function () {
         return fa(fb.apply(null, arguments));
@@ -1636,10 +1642,11 @@ define(
 
     var never = constant(false);
     var always = constant(true);
-    
+
 
     return {
       noop: noop,
+      noarg: noarg,
       compose: compose,
       constant: constant,
       identity: identity,
@@ -1701,8 +1708,9 @@ define(
         - "apply" operation on the Option Apply/Applicative.
         - Equivalent to <*> in Haskell/PureScript.
 
-      each :: this Option a -> (a -> b) -> Option b
-        - same as 'map'
+      each :: this Option a -> (a -> b) -> undefined
+        - similar to 'map', but doesn't return a value.
+        - intended for clarity when performing side effects.
 
       bind :: this Option a -> (a -> Option b) -> Option b
         - "bind"/"flatMap" operation on the Option Bind/Monad.
@@ -2107,6 +2115,14 @@ define(
       return copy;
     };
 
+    var head = function (xs) {
+      return xs.length === 0 ? Option.none() : Option.some(xs[0]);
+    };
+
+    var last = function (xs) {
+      return xs.length === 0 ? Option.none() : Option.some(xs[xs.length - 1]);
+    };
+
     return {
       map: map,
       each: each,
@@ -2131,7 +2147,9 @@ define(
       mapToObject: mapToObject,
       pure: pure,
       sort: sort,
-      range: range
+      range: range,
+      head: head,
+      last: last
     };
   }
 );
