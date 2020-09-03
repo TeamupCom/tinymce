@@ -13,7 +13,7 @@ Instructions to update TinyMCE to the lastest:
 
 3. Merge upstream master into the origin master and choose the "fast-forward" option.
 
-4. At the head of the origin master add a new branch "teamup-customizations-{version}", 
+4. At the head of the origin master add a new branch "teamup-customizations-{version}",
    where _version_ is the last version of the master branch. For example, "teamup-customizations-5.8.1".
 
 5. Apply our modifications to TinyMCE step by step to the feature branch. We cannot just rebased our

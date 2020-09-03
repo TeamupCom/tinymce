@@ -2,6 +2,7 @@
   "extends": "plugin:@tinymce/editor",
   "parserOptions": {
     "sourceType": "module",
+    "createDefaultProgram": true,
     "project": [
       "./tsconfig.json",
       "modules/*/tsconfig.json"
