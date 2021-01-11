@@ -122,6 +122,11 @@
                     },
                     context: 'insert'
                 });
+                editor.ui.registry.addContextMenu('teamuplinknewtab', {
+                    update: function(element) {
+                        return (element.hasAttribute('data-mce-src') || element.hasAttribute('data-mce-href')) ? 'teamuplinknewtab' : '';
+                    }
+                });
             });
 
             return function () { };
