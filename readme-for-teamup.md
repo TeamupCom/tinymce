@@ -49,23 +49,16 @@ Instructions to update TinyMCE to the lastest:
     > npm install tinymce
 
 
-Update "teamuplinknewtab" plugin
+Generate production js: "tinymce.full.min.js"
 --------------------------------
 
-1. Ensure you are in plugin directory: c/tinymce/src/plugins/teamuplinknewtab
+1. Ensure you are in the root directory and run:
+  > gulp tinymce:minify
 
-2. Run "npm start" to start the autoreloading development server. Apply changes to source file: /src/index.js
+Useful
+---------------------------------------
+1. Create or update editor icon
+https://www.tiny.cloud/docs/advanced/creating-an-icon-pack/
 
-3. Create distribution build: run "npm run build". A dist directory will be created with a directory in it named the same as your plugin containing three files
-    - plugin.js - unminified plugin bundle
-    - plugin.min.js - minified and uglified plugin bundle
-    - LICENSE - the text file containing you license
-
-4. Build Tinymce by running "grunt" in root directory
-
-5. Run "grunt bundle -themes=modern -plugins=autolink,contextmenu,lists,image,nonbreaking,tabfocus,visualchars,paste,charmap,emoticons,link,code,teamuplinknewtab"
-   Minifies the core, adds the modern theme and adds the "teamuplinknewtab" plugin into tinymce.full.min.js.
-
-
-Create new plugin:
-https://www.tinymce.com/docs/advanced/yeoman-generator/
+2. Create new plugin:
+https://www.tiny.cloud/docs/advanced/creating-a-plugin/
