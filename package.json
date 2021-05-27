@@ -1,7 +1,7 @@
 {
   "name": "root",
   "private": true,
-  "version": "5.4.1+teamup",
+  "version": "5.8.1+teamup",
   "workspaces": [
     "modules/*"
   ],

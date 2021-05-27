@@ -38,15 +38,8 @@ Instructions to update TinyMCE to the lastest:
     - File package.json: Update dependeny on tinymce to the latest commit.
 
 9. Update dependency of Teamup Calendar on tinymce
-   > npm update tinymce
-   > npm shrinkwrap
-   Then commit changes.
-
-10. Build Teamup Calendar with latest TinyMCE instance
-    > composer publish
-
-11. Inform other users to update to dependency on tinymce:
-    > npm install tinymce
+   > yarn install
+   > Then commit changes.
 
 Useful
 ---------------------------------------
