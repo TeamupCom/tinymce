@@ -26,11 +26,11 @@ Instructions to update TinyMCE to the lastest:
 
 7. Build:
 
-   > grunt
+   > yarn tinymce-grunt
 
 8. Build custom version for Teamup
 
-   > grunt bundle -themes=modern -plugins=autolink,contextmenu,lists,image,nonbreaking,tabfocus,visualchars,paste,charmap,emoticons,link,code,teamuplinknewtab
+   > gulp tinymce:minify
 
 9. Commit all changes
 
@@ -48,17 +48,13 @@ Instructions to update TinyMCE to the lastest:
 11. Inform other users to update to dependency on tinymce:
     > npm install tinymce
 
-
-Generate production js: "tinymce.full.min.js"
---------------------------------
-
-1. Ensure you are in the root directory and run:
-  > gulp tinymce:minify
-
 Useful
 ---------------------------------------
 1. Create or update editor icon
-https://www.tiny.cloud/docs/advanced/creating-an-icon-pack/
+  > https://www.tiny.cloud/docs/advanced/creating-an-icon-pack/
 
 2. Create new plugin:
-https://www.tiny.cloud/docs/advanced/creating-a-plugin/
+  > https://www.tiny.cloud/docs/advanced/creating-a-plugin/
+
+3. Download languages
+  > https://www.tiny.cloud/get-tiny/language-packages/
