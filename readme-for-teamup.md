@@ -2,23 +2,20 @@
 
 This is a customized version of the TinyMCE editor.
 
-Instructions to update TinyMCE to the lastest:
+Instructions to update TinyMCE to the latest:
 
 1. Ensure you have upstream pointing to the tinymce Github repo.
 
    > git remote -v
    > git remote add upstream https://github.com/tinymce/tinymce.git
 
-2. Fetch the latest from upstream
+2. Fetch the latest from upstream branch "upsteam/release/7"
 
-3. Merge upstream master into the origin master and choose the "fast-forward" option.
+3. Update our branch origin/release/7 by merging in all changes from upstream/release/7 and choose the "fast-forward" option.
 
-4. At the head of the origin master add a new branch "teamup-customizations-{version}",
-   where _version_ is the last version of the master branch. For example, "teamup-customizations-5.8.1".
+4. Determine the commit on "origin/release/7" where we want to branch off our modifications. Usually, this is the latest released version if Tiny. At the chosen commit, add a new branch teamup-customizations-{version}", where _version_ is the latest released version of Tiny. For example, "teamup-customizations-7.6.0".
 
-5. Apply our modifications to TinyMCE step by step to the feature branch. We cannot just rebased our
-   past changes because some of the changes need to be updated. For example, we need to fetch the
-   latest version of the language files, etc.
+5. Apply our modifications to TinyMCE step by step to the feature branch. We cannot just rebased our past changes because some of the changes need to be updated. For example, we need to fetch the latest version of the language files, etc.
 
 6. Install dependencies:
 
